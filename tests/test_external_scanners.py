@@ -507,4 +507,3 @@ def test_report_displays_tool_version_and_method_for_risks(
     assert document["risks"][0]["tool_version"] == "1.7.1"
     assert document["risks"][0]["method"] == "verified"
     assert document["risks"][0]["kind"]
-
