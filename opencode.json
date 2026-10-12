@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ens-audit": {
+      "type": "local",
+      "enabled": true,
+      "timeout": 10000,
+      "command": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "fastmcp",
+        "run",
+        "src/ens_audit/server.py:mcp"
+      ]
+    }
+  }
+}
