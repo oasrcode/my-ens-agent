@@ -50,6 +50,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Use the repo-scoped allowlist for the fictional fixtures only.
           GITLEAKS_CONFIG: .gitleaks.toml
+          # Pin the gitleaks binary for deterministic detections. The action
+          # otherwise installs 8.24.3, which ignores the plural `[[allowlists]]`
+          # form; our .gitleaks.toml uses the singular `[allowlist]` (honoured by
+          # both 8.24.3 and 8.30.1), and this pin keeps the CI version fixed.
+          GITLEAKS_VERSION: "8.30.1"
           # Scan-only: no PR comments / artifacts, so contents: read is enough.
           GITLEAKS_ENABLE_COMMENTS: "false"
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          # NOTE: gitleaks-action requires a GITLEAKS_LICENSE for ORGANIZATION
+          # accounts only. This repository is under a personal account, so no
+          # license secret is needed.
