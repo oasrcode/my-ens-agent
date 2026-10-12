@@ -1,0 +1,523 @@
+[
+  {
+    "measure_code": "org.1",
+    "verdict": "no_evaluable",
+    "notes": "No ENS security policy artefact in the repository. Only project/community governance docs exist (Agents/CoC/Contributing); no mission, legal-regulatory framework, security roles, committee structure or documentation-management directives are defined.",
+    "evidence": [
+      {"kind": "note", "location": "AGENTS.md:44", "detail": "Repo describes itself as an intentionally insecure training app; no security policy document, roles or committee are present."}
+    ]
+  },
+  {
+    "measure_code": "org.2",
+    "verdict": "no_evaluable",
+    "notes": "No security normativa defining correct/incorrect use of equipment, services or facilities, nor personnel responsibilities/discipline. CODE_OF_CONDUCT.md is community behaviour policy, not an ENS security norm.",
+    "evidence": [
+      {"kind": "note", "location": "CODE_OF_CONDUCT.md:1", "detail": "Only a community code of conduct exists; no security usage normativa or disciplinary measures artefact."}
+    ]
+  },
+  {
+    "measure_code": "org.3",
+    "verdict": "no_evaluable",
+    "notes": "No security procedures defining routine tasks, responsible parties, anomaly reporting, or information handling (access, storage, copies, labelling, transmission). CONTRIBUTING.md covers code contribution workflow only.",
+    "evidence": [
+      {"kind": "note", "location": "CONTRIBUTING.md:10", "detail": "Contribution rules describe PR workflow; no ENS security procedures are documented."}
+    ]
+  },
+  {
+    "measure_code": "org.4",
+    "verdict": "no_evaluable",
+    "notes": "No authorization process for facilities, production entry of equipment/applications, communications links, media or third-party services. Repo provides no authorisation records or procedure.",
+    "evidence": [
+      {"kind": "note", "location": "Dockerfile:1", "detail": "Deployment is defined directly by Dockerfile/CI; no authorization-process artefact exists in repo."}
+    ]
+  },
+  {
+    "measure_code": "op.pl.1",
+    "verdict": "parcial",
+    "notes": "A STRIDE threat model exists with owner and data-flow diagrams (assets/threats), which partially addresses asset/threat identification, but there is no formal ENS risk analysis mapping safeguards and residual risks.",
+    "evidence": [
+      {"kind": "file_line", "location": "threat-model.json:4", "detail": "Threat model with declared owner ('Björn Kimminich') and STRIDE diagrams."},
+      {"kind": "file_line", "location": "threat-model.json:1", "detail": "Threat model has summary/detail structure; no residual-risk or safeguards section."}
+    ]
+  },
+  {
+    "measure_code": "op.pl.2",
+    "verdict": "parcial",
+    "notes": "Some architecture documentation and network segmentation exist (VPC/subnets/security groups/ALB in Terraform, threat-model data-flow diagrams), but there is no ENS security architecture doc with lines-of-defence, interconnection points or authentication scheme description.",
+    "evidence": [
+      {"kind": "file_line", "location": "terraform/networking.tf:6", "detail": "VPC/subnets/security groups/ALB define network architecture."},
+      {"kind": "file_line", "location": "threat-model.json:1", "detail": "Data-flow/STRIDE diagrams document the system at a high level only."}
+    ]
+  },
+  {
+    "measure_code": "op.pl.3",
+    "verdict": "parcial",
+    "notes": "Automated dependency updates and locked dependencies exist, giving some procurement/component control, but no process ties component acquisition to risk-analysis conclusions, security architecture, training or funding.",
+    "evidence": [
+      {"kind": "config", "location": ".dependabot/config.yml:1", "detail": "Automated dependency update configuration for javascript package managers."},
+      {"kind": "file_line", "location": "package.json:1", "detail": "Dependencies declared/locked; no acquisition process documentation."}
+    ]
+  },
+  {
+    "measure_code": "op.pl.4",
+    "verdict": "parcial",
+    "notes": "Resource sizing is defined (ECS task CPU/memory, desired count, compose memory limits, subnet layout), partially covering processing/storage capacity, but no formal capacity-management analysis across personnel/communications/facilities dimensions.",
+    "evidence": [
+      {"kind": "file_line", "location": "terraform/variables.tf:31", "detail": "task_cpu/task_memory variables define compute sizing."},
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:38", "detail": "Compose deploy resources limit memory to 512M."}
+    ]
+  },
+  {
+    "measure_code": "op.pl.5",
+    "verdict": "no_cumple",
+    "notes": "No evidence of selecting CCN-CPSTIC-qualified/certified products or Article 19-certified components. The stack uses standard upstream images (nginx/redis/mongo) and npm packages with no certification reference.",
+    "evidence": [
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:4", "detail": "nginx:1.28.0-alpine upstream image, not a CPSTIC-listed product."},
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:59", "detail": "mongo:4.4.29 upstream image, no certification evidence."}
+    ]
+  },
+  {
+    "measure_code": "op.acc.1",
+    "verdict": "parcial",
+    "notes": "Accounts have unique identifiers (UserModel id/email) and distinct roles (customer/deluxe/accounting/admin), partially satisfying identification, but there is no ENS-grade identity management, account-disable lifecycle or retention period.",
+    "evidence": [
+      {"kind": "file_line", "location": "models/user.ts:76", "detail": "Role field constrained to customer/deluxe/accounting/admin."},
+      {"kind": "file_line", "location": "models/user.ts:70", "detail": "Per-user credentials/password field define unique accounts."}
+    ]
+  },
+  {
+    "measure_code": "op.acc.2",
+    "verdict": "no_cumple",
+    "notes": "Access-control enforcement is intentionally broken: CORS allows everything, an authorization middleware on product modification is commented out, and directory/file listing is exposed. Access to resources is not reliably restricted to authorised entities.",
+    "evidence": [
+      {"kind": "file_line", "location": "server.ts:398", "detail": "PUT /api/Products authorization intentionally commented out (changeProductChallenge)."},
+      {"kind": "file_line", "location": "server.ts:184", "detail": "app.use(cors()) allows all origins per the 'Allow everything!' comment."},
+      {"kind": "file_line", "location": "server.ts:290", "detail": "Public /ftp directory listing and file download exposed."}
+    ]
+  },
+  {
+    "measure_code": "op.acc.3",
+    "verdict": "no_evaluable",
+    "notes": "No evidence of segregation of duties between development/operation or between authorisers/controllers. CONTRIBUTING.md describes a PR/branch workflow only, not personnel segregation.",
+    "evidence": [
+      {"kind": "note", "location": "CONTRIBUTING.md:14", "detail": "Only a branch/PR contribution model is documented; no segregation-of-duties evidence."}
+    ]
+  },
+  {
+    "measure_code": "op.acc.4",
+    "verdict": "no_cumple",
+    "notes": "Roles exist but least-privilege and periodic access review are not implemented; privilege escalation and broken access control are intentional challenges, and some destructive endpoints deny all while others are deliberately left open.",
+    "evidence": [
+      {"kind": "file_line", "location": "server.ts:394", "detail": "PUT/DELETE /api/Users/:id denyAll, yet other endpoints are intentionally unguarded."},
+      {"kind": "file_line", "location": "models/user.ts:80", "detail": "Role whitelist exists but access rights are not enforced per least privilege."}
+    ]
+  },
+  {
+    "measure_code": "op.acc.5",
+    "verdict": "no_cumple",
+    "notes": "External authentication is intentionally weak: login uses string-concatenated SQL, a default weak admin credential (admin123) is a known challenge, and rate limiting is applied only to reset-password, not login (no attempt limiting/lockout).",
+    "evidence": [
+      {"kind": "file_line", "location": "routes/login.ts:34", "detail": "Login builds SQL by string concatenation (SQLi / loginAdmin challenge)."},
+      {"kind": "file_line", "location": "routes/login.ts:59", "detail": "Known weak admin credential admin123 is a challenge trigger."},
+      {"kind": "file_line", "location": "server.ts:371", "detail": "Rate limiting only on /rest/user/reset-password; no login attempt limiting."}
+    ]
+  },
+  {
+    "measure_code": "op.acc.6",
+    "verdict": "no_cumple",
+    "notes": "Organisation-user authentication lacks credential lifecycle controls: weak/default passwords are intentional challenges, no rotation policy exists, and lockout/attempt-limiting for internal users is absent.",
+    "evidence": [
+      {"kind": "file_line", "location": "models/user.ts:73", "detail": "Password stored via security.hash but weak-password challenge is intentional."},
+      {"kind": "file_line", "location": "routes/login.ts:34", "detail": "Internal login shares the same weak SQL-concatenated authentication path."}
+    ]
+  },
+  {
+    "measure_code": "op.exp.1",
+    "verdict": "parcial",
+    "notes": "A CycloneDX SBOM is generated at build time, partially covering a software-component inventory, but there is no complete asset inventory identifying every system element and its responsible owner.",
+    "evidence": [
+      {"kind": "file_line", "location": "Dockerfile:20", "detail": "npm run sbom generates a CycloneDX SBOM (bom.json)."},
+      {"kind": "config", "location": "package.json:77", "detail": "sbom script: cyclonedx-npm --output-format=JSON."}
+    ]
+  },
+  {
+    "measure_code": "op.exp.3",
+    "verdict": "parcial",
+    "notes": "Security-relevant configuration is version-controlled and schema-validated, giving partial configuration management, but there is no controlled change/authorisation process for security configuration nor guarantee of minimum-functionality/least-privilege.",
+    "evidence": [
+      {"kind": "file_line", "location": "lib/startup/validateConfig.ts:54", "detail": "checkConfigSchema validates configuration against a schema."},
+      {"kind": "config", "location": "config/default.yml:1", "detail": "Central configuration file; no authorization/change-control metadata."}
+    ]
+  },
+  {
+    "measure_code": "op.exp.5",
+    "verdict": "parcial",
+    "notes": "Change control exists via PR/branch model and CI checks (lint, tests), but there is no formal change-request registry, pre-production equivalence testing record, or risk-based approval by a Security Officer.",
+    "evidence": [
+      {"kind": "file_line", "location": "CONTRIBUTING.md:14", "detail": "All PRs must be based off develop; dedicated scope required."},
+      {"kind": "file_line", "location": ".github/workflows/ci.yml:26", "detail": "CI lint/test jobs gate changes but no change-request registry."}
+    ]
+  },
+  {
+    "measure_code": "op.exp.7",
+    "verdict": "parcial",
+    "notes": "A vulnerability-reporting policy and CSAF advisory feed exist (partial incident/weakness handling), but there is no integral incident-management process with classification and notification escalation.",
+    "evidence": [
+      {"kind": "file_line", "location": "SECURITY.md:18", "detail": "Vulnerability reporting policy with contact and PGP encryption."},
+      {"kind": "file_line", "location": ".well-known/csaf/index.txt:1", "detail": "CSAF advisory index provides security-advisory records."}
+    ]
+  },
+  {
+    "measure_code": "op.exp.9",
+    "verdict": "parcial",
+    "notes": "CSAF security advisories are recorded, giving partial incident/vulnerability record keeping, but there is no register of initial/intermediate/final incident reports or legally-admissible evidence handling.",
+    "evidence": [
+      {"kind": "file_line", "location": ".well-known/csaf/2024/juice-shop-sa-disclaimer.json:1", "detail": "CSAF security advisory artefact stored in repo."}
+    ]
+  },
+  {
+    "measure_code": "op.ext.1",
+    "verdict": "no_evaluable",
+    "notes": "No SLA or external-provider contract artefacts exist in the repository; nothing evidences characteristics of service, minimum acceptable service or provider responsibility.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No contracts/SLA artefacts; repo is the open-source application only."}
+    ]
+  },
+  {
+    "measure_code": "op.ext.2",
+    "verdict": "no_evaluable",
+    "notes": "No routine process to measure external-service compliance or maintenance-coordination procedures with providers is present in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No provider service-measurement or coordination procedure artefact found."}
+    ]
+  },
+  {
+    "measure_code": "op.ext.3",
+    "verdict": "parcial",
+    "notes": "Supply-chain hygiene partially exists (Dependabot, CodeQL, SBOM generation), but there is no analysis of supply-chain incident impact, risk estimation or containment measures.",
+    "evidence": [
+      {"kind": "file_line", "location": ".github/workflows/codeql-analysis.yml:1", "detail": "CodeQL security scanning of dependencies/source in CI."},
+      {"kind": "file_line", "location": "Dockerfile:20", "detail": "SBOM generation provides component provenance."}
+    ]
+  },
+  {
+    "measure_code": "op.ext.4",
+    "verdict": "no_evaluable",
+    "notes": "No prior-authorization records or explicit interface/security/data documentation for interconnections with other systems are present. IaC shows network endpoints but not interconnection agreements.",
+    "evidence": [
+      {"kind": "note", "location": "terraform/networking.tf:183", "detail": "HTTPS listener/interconnection exists technically, but no interconnexion authorization or interface documentation is in repo."}
+    ]
+  },
+  {
+    "measure_code": "op.nub.1",
+    "verdict": "parcial",
+    "notes": "The system is deployable on AWS (public cloud, IaaS) via Terraform, but there is no evidence of CCN-STIC service-model conformity, pentesting, transparency, key management or data-jurisdiction requirements.",
+    "evidence": [
+      {"kind": "file_line", "location": "terraform/main.tf:1", "detail": "AWS provider used for cloud deployment (ECS/EFS/ALB)."},
+      {"kind": "file_line", "location": "terraform/variables.tf:4", "detail": "Region eu-west-1; no cloud-conformity or jurisdiction requirements documented."}
+    ]
+  },
+  {
+    "measure_code": "op.cont.1",
+    "verdict": "no_evaluable",
+    "notes": "No business-impact analysis artefacts defining service availability requirements or critical elements are present in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No continuity/impact-analysis artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "op.cont.2",
+    "verdict": "no_evaluable",
+    "notes": "No continuity plan (roles, responsibilities, activation of alternative means, training, integration with organisational plans) exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No continuity-plan artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "op.cont.3",
+    "verdict": "no_evaluable",
+    "notes": "Periodic tests exist for software (CI), but there is no evidence of periodic tests of a continuity plan to detect/correct its deficiencies.",
+    "evidence": [
+      {"kind": "note", "location": ".github/workflows/ci.yml:233", "detail": "CI/e2e tests periodically run, but these are not continuity-plan tests."}
+    ]
+  },
+  {
+    "measure_code": "op.cont.4",
+    "verdict": "parcial",
+    "notes": "Technical redundancy exists (2 ECS tasks, two AZ subnets, restart policies, transitive EFS encryption), partially covering alternate means, but there is no planned alternate facilities/personnel/communications or maximum activation time.",
+    "evidence": [
+      {"kind": "file_line", "location": "terraform/variables.tf:43", "detail": "desired_count=2 (two ECS task instances)."},
+      {"kind": "file_line", "location": "terraform/networking.tf:18", "detail": "public_subnet count spans two availability zones."},
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:6", "detail": "restart: unless-stopped provides process-level resilience."}
+    ]
+  },
+  {
+    "measure_code": "op.mon.1",
+    "verdict": "no_cumple",
+    "notes": "No intrusion detection/prevention tools are deployed. Network configuration defines only security groups and an ALB; there is no WAF/IDS/IPS or equivalent detection mechanism.",
+    "evidence": [
+      {"kind": "file_line", "location": "terraform/networking.tf:63", "detail": "ALB security group only; no IDS/IPS/WAF resource."},
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:1", "detail": "Compose stack (nginx/app/redis/mongo) contains no intrusion-detection service."}
+    ]
+  },
+  {
+    "measure_code": "op.mon.2",
+    "verdict": "parcial",
+    "notes": "A Prometheus metrics endpoint and a Grafana dashboard exist, giving partial measurement, but they track application/business metrics, not ENS measure-implantation metrics or the annual report required by art. 32.",
+    "evidence": [
+      {"kind": "file_line", "location": "routes/metrics.ts:84", "detail": "serveMetrics exposes prom-client registry metrics."},
+      {"kind": "file_line", "location": "monitoring/grafana-dashboard.json:1061", "detail": "Grafana dashboard with Technical/Business metrics, not ENS compliance metrics."}
+    ]
+  },
+  {
+    "measure_code": "op.mon.3",
+    "verdict": "parcial",
+    "notes": "Automatic event collection partially exists via morgan access logs (daily rotation, audit.json), but there is no SIEM/correlation or security-event surveillance system.",
+    "evidence": [
+      {"kind": "file_line", "location": "server.ts:366", "detail": "morgan('combined') writes access logs to rotating stream."},
+      {"kind": "file_line", "location": "server.ts:361", "detail": "audit_file: logs/audit.json configured."},
+      {"kind": "file_line", "location": "lib/logger.ts:8", "detail": "winston logger outputs to console only."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.1",
+    "verdict": "no_evaluable",
+    "notes": "No data-centre/CPD facility documentation, separate-area layout or physical access-control evidence exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "Physical facility/area separation is out of scope of the source repository; no artefact present."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.2",
+    "verdict": "no_evaluable",
+    "notes": "No physical personnel-access identification/registration procedure or entry/exit log for facilities is present.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No facility access-registration artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.3",
+    "verdict": "no_evaluable",
+    "notes": "No documentation of local environmental conditioning (temperature/humidity, cabling protection, risk-driven protection) exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No facility-conditioning documentation found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.4",
+    "verdict": "no_evaluable",
+    "notes": "No electrical-supply or emergency-lighting provisions for the hosting facility are documented in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No electrical-supply documentation found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.5",
+    "verdict": "no_evaluable",
+    "notes": "No fire-protection provisions for the hosting facility are documented in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No fire-protection documentation found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.6",
+    "verdict": "no_evaluable",
+    "notes": "No flood/water-damage protection provisions for the hosting facility are documented in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No flood-protection documentation found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.if.7",
+    "verdict": "no_evaluable",
+    "notes": "No register of equipment entry/exit from facilities (with authorising person) exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No equipment-movement register found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.per.1",
+    "verdict": "no_evaluable",
+    "notes": "No workstation-characterisation or role security-responsibility definition, nor personnel screening requirements, exist in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "CONTRIBUTING.md:10", "detail": "Contributor rules only; no workstation/role security-responsibility definition."}
+    ]
+  },
+  {
+    "measure_code": "mp.per.2",
+    "verdict": "no_evaluable",
+    "notes": "No personnel duties/obligations register, disciplinary measures or confidentiality commitments (including post-termination and subcontracted personnel) exist in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "CODE_OF_CONDUCT.md:1", "detail": "Community conduct only; no personnel duties/obligations or confidentiality clauses."}
+    ]
+  },
+  {
+    "measure_code": "mp.per.3",
+    "verdict": "no_evaluable",
+    "notes": "No awareness programme covering good-use norms, social engineering or incident reporting exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No security-awareness/concientisation artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.per.4",
+    "verdict": "no_evaluable",
+    "notes": "No regular security training programme (system configuration, incident detection/reaction, information handling) exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No security-training programme artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.eq.1",
+    "verdict": "no_evaluable",
+    "notes": "No clear-desk policy or evidence about workstation material control exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No clear-desk policy artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.eq.2",
+    "verdict": "no_evaluable",
+    "notes": "No evidence of workstation inactivity lock or re-authentication configuration; the repository does not manage endpoint workstations.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "Endpoint lock configuration is not represented in the repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.eq.3",
+    "verdict": "no_evaluable",
+    "notes": "No inventory of portable devices, loss-reporting procedure, remote-access minimisation or remote-key restriction evidence exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No portable-device management artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.eq.4",
+    "verdict": "no_evaluable",
+    "notes": "No configuration controls for other network-connected devices nor their data-erasure functionality are documented in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No network-device control/erasure artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.com.4",
+    "verdict": "parcial",
+    "notes": "Internal services are placed on a dedicated bridge network and redis/mongo are only exposed internally (not published to the host), partially separating information flows, but there is no evidence of traffic segregation or wireless segmentation policy.",
+    "evidence": [
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:82", "detail": "Dedicated juice-shop-net bridge network."},
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:53", "detail": "redis uses expose (internal only), not host-published ports."},
+      {"kind": "file_line", "location": "infrastructure/docker-compose.yml:69", "detail": "mongo uses expose (internal only)."}
+    ]
+  },
+  {
+    "measure_code": "mp.si.1",
+    "verdict": "no_evaluable",
+    "notes": "No security-level marking/metadata for information media (USO OFICIAL or equivalent) exists in the repository or in served assets.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No media-marking scheme or classification metadata artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.si.3",
+    "verdict": "no_evaluable",
+    "notes": "No custody/marking diligence records, nor manufacturer environmental-maintenance requirements for media, are present in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No media-custody artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.si.4",
+    "verdict": "no_evaluable",
+    "notes": "No media transport register, reconciliation procedure or transport-key management evidence exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No media-transport artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.si.5",
+    "verdict": "no_evaluable",
+    "notes": "No secure-erasure/destruction procedure or media-sanitisation mechanism (per CCN-STIC criteria) is present in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "routes/dataErasure.ts:74", "detail": "Only logical user-data erasure requests exist; no media secure-erasure/destruction procedure."}
+    ]
+  },
+  {
+    "measure_code": "mp.sw.2",
+    "verdict": "parcial",
+    "notes": "Extensive automated test suites (unit/integration/e2e/smoke) provide partial acceptance testing, but no explicit security acceptance criteria or non-deterioration checks for other components are documented.",
+    "evidence": [
+      {"kind": "file_line", "location": ".github/workflows/ci.yml:233", "detail": "Dedicated e2e-test job runs Cypress acceptance tests."},
+      {"kind": "file_line", "location": ".github/workflows/ci.yml:321", "detail": "Docker smoke test on the built image."},
+      {"kind": "config", "location": "package.json:57", "detail": "Test/lint scripts only; no explicit security acceptance criteria."}
+    ]
+  },
+  {
+    "measure_code": "mp.info.1",
+    "verdict": "parcial",
+    "notes": "The system processes personal data and exposes data-export/erasure request endpoints, partially covering data-subject rights, but there is no documented RGPD/DPD requirement set or impact assessment.",
+    "evidence": [
+      {"kind": "file_line", "location": "routes/dataErasure.ts:74", "detail": "Data-erasure request endpoint accepting user personal data."},
+      {"kind": "file_line", "location": "routes/privacyPolicyProof.ts:11", "detail": "Privacy-policy proof endpoint exists."},
+      {"kind": "config", "location": "config/default.yml:16", "detail": "privacyContactEmail configured."}
+    ]
+  },
+  {
+    "measure_code": "mp.info.2",
+    "verdict": "no_cumple",
+    "notes": "No information classification levels, USO OFICIAL marking, information-owner assignment or criteria for required security level exist. Configuration and data models treat all information uniformly (no classification field).",
+    "evidence": [
+      {"kind": "config", "location": "config/default.yml:5", "detail": "Application config contains no information-classification or owner metadata."},
+      {"kind": "file_line", "location": "models/user.ts:27", "detail": "Data model has no information-classification/security-level field."}
+    ]
+  },
+  {
+    "measure_code": "mp.info.3",
+    "verdict": "no_evaluable",
+    "notes": "No electronic-signature mechanism (per Ley 39/2015 or equivalent) is present in the system or documented in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No electronic-signature artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.info.4",
+    "verdict": "no_evaluable",
+    "notes": "No qualified electronic time-stamping mechanism or verification-data protection/renovation policy exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No time-stamping artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.info.5",
+    "verdict": "no_evaluable",
+    "notes": "No document-cleaning process to remove hidden fields/metadata/comments from documents offered publicly is present in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No document-cleaning artefact found in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.s.1",
+    "verdict": "no_evaluable",
+    "notes": "The repository contains no email service or email-protection configuration/usage norms (anti-spam, malware, routing protection).",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "Email is used only for out-of-band contact; no email-security artefact in repo."}
+    ]
+  },
+  {
+    "measure_code": "mp.s.2",
+    "verdict": "no_cumple",
+    "notes": "The web application is intentionally vulnerable: XSS protection is disabled, SQL injection is intentional, and injection/XSS/broken-access challenges are part of the design, so the web-service protection requirements are demonstrably not met.",
+    "evidence": [
+      {"kind": "file_line", "location": "server.ts:189", "detail": "helmet.xssFilter() commented out ('no protection from persisted XSS')."},
+      {"kind": "file_line", "location": "routes/login.ts:34", "detail": "Intentional SQL injection in the login query (loginAdmin/Bender/Jim challenges)."},
+      {"kind": "file_line", "location": "data/static/challenges.yml:465", "detail": "Challenge catalogue includes XSS/injection/broken-access-control challenges."}
+    ]
+  },
+  {
+    "measure_code": "mp.s.3",
+    "verdict": "no_evaluable",
+    "notes": "No web-browsing usage policy, awareness programme, cookie-control policy or address-resolution protection for organisational users exists in the repository.",
+    "evidence": [
+      {"kind": "note", "location": "README.md:1", "detail": "No web-browsing normativa/awareness artefact found in repo."}
+    ]
+  }
+]
