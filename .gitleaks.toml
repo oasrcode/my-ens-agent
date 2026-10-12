@@ -1,0 +1,25 @@
+# gitleaks configuration for the public `ens-audit` repository.
+#
+# This file EXTENDS gitleaks' built-in default ruleset (`useDefault = true`):
+# every default detection rule stays active. It only adds a single, narrow
+# allowlist; detection is NOT weakened anywhere else.
+#
+# The allowlist covers `tests/fixtures/`, which ships in the public repo as a
+# curated subset and holds INTENTIONALLY vulnerable / insecure sample files
+# (fake API keys, JWTs, private keys, weak crypto). Their defects are the
+# fixtures' whole purpose: the deterministic scanners under test must flag them.
+# See `tests/README.md` ("Secrets in fixtures are fictional").
+#
+# NOTE: this file configures gitleaks ONLY. It does NOT configure GitHub Secret
+# Scanning; any GitHub alerts on these fixture paths are known false positives.
+#
+# NOTE: do NOT add secrets here — this file contains no secret values.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Intentionally vulnerable scanner fixtures (fictional secrets are the point)"
+paths = [
+  '''tests/fixtures/''',
+]

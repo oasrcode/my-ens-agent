@@ -216,9 +216,33 @@ software; el catálogo de `data/` mantiene su licencia **EUPL-1.2** y su atribuc
 - **Deriva normativa.** El catálogo es **dato versionado**; la actualización de la fuente
   debe revalidar los recuentos (73 medidas, 16 familias).
 
-> **Nota sobre los tests.** La batería de pruebas (unitarias, integridad de catálogo y
-> *end-to-end*) vive en el **repositorio privado de desarrollo** y no se distribuye en esta
-> versión pública.
+---
+
+## Tests y CI
+
+Este repositorio público distribuye un **subconjunto curado** de la batería de pruebas —
+importación del paquete, integridad del catálogo, aplicabilidad, evaluador, trazabilidad,
+informes (Markdown/JSON/HTML), escáneres de código e infraestructura, escáneres externos/SARIF,
+superficie MCP y *end-to-end*— junto con los *fixtures* que necesita. El detalle está en
+[`tests/README.md`](tests/README.md).
+
+```bash
+uv sync
+uv run pytest -q                 # suite curada (offline, autocontenida)
+uv run ruff check src tests      # lint
+```
+
+La **integración continua** corre en GitHub Actions (`.github/workflows/ci.yml`) en cada `push` y
+`pull request` a `main`: `uv sync`, `ruff`, `pytest` y un escaneo de secretos con `gitleaks`.
+
+> **Fixtures y secretos.** `tests/fixtures/**` contiene muestras **deliberadamente vulnerables y
+> ficticias** (credenciales, claves y tokens de ejemplo): sus defectos son el propósito de los
+> escáneres. Por eso se excluyen de `ruff` y de la detección de secretos mediante una allowlist
+> acotada en [`.gitleaks.toml`](.gitleaks.toml).
+
+> **Aviso sobre GitHub Secret Scanning.** La allowlist de `.gitleaks.toml` configura **solo**
+> `gitleaks`; **no** configura GitHub Secret Scanning. En consecuencia, cualquier alerta de GitHub
+> sobre esas rutas de *fixtures* es un **falso positivo conocido**.
 
 ---
 

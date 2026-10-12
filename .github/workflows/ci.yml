@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: the job only reads repository contents.
+permissions:
+  contents: read
+
+# Cancel superseded runs for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (uv · pytest · ruff · gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # fetch-depth: 0 gives gitleaks the full history to scan.
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # Pin the uv version to match the committed lockfile toolchain.
+          version: "0.13.0"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        # --locked fails if uv.lock is out of sync (no silent resolution).
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Tests (pytest)
+        run: uv run pytest -q
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use the repo-scoped allowlist for the fictional fixtures only.
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # Scan-only: no PR comments / artifacts, so contents: read is enough.
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
