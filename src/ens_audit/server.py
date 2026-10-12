@@ -4,7 +4,9 @@ Exposes the deterministic ENS-audit core over the Model Context Protocol with
 FastMCP 4:
 
 * the 73-measure catalog (RD 311/2022, Anexo II) and its applicability engine;
-* the 10 built-in scanners, the compliance evaluator and the report renderers.
+* the 10 built-in scanners, the compliance evaluator and the report renderers;
+* the opt-in external scanners (OSV-Scanner / Semgrep / Trivy) plus SARIF
+  import, for verification-grade evidence when those tools are available.
 
 The server speaks MCP over **stdio**, so it must never write to stdout; all
 diagnostics go through the MCP logging notifications or stderr.
@@ -46,9 +48,13 @@ from ens_audit.catalog.models import (
 )
 
 # Importing the scanner packages registers the 10 built-in scanners in the
-# global registry, so ``run_scans`` can discover them.
+# global registry, so ``run_scans`` can discover them. The external package
+# additionally registers the opt-in ``external.*`` scanners: they are selectable
+# by id but excluded from the default ``run_scans`` selection.
 from ens_audit.checks import code as _checks_code  # noqa: F401
+from ens_audit.checks import external as _checks_external  # noqa: F401
 from ens_audit.checks import infra as _checks_infra  # noqa: F401
+from ens_audit.checks.external import import_sarif as _import_sarif
 from ens_audit.checks.registry import run_scans as _run_scans
 from ens_audit.evaluate import evaluate_compliance as _evaluate_compliance
 from ens_audit.guides import Guide, get_guide, guides_for_measure
@@ -343,13 +349,25 @@ def run_scans(
     target: str,
     checks: Annotated[
         list[str] | None,
-        "Scanner ids to run; all registered scanners when omitted.",
+        "Scanner ids to run; all registered (non-external) scanners when omitted.",
     ] = None,
+    include_external: Annotated[
+        bool,
+        "Include the opt-in external scanners (external.osv/semgrep/trivy) in "
+        "the default selection. Off by default: a routine scan never runs them.",
+    ] = False,
 ) -> ScanReport:
     """Run deterministic scanners against a directory/file and store the report.
 
     The resulting :class:`ScanReport` becomes the most recent scan, so a later
     ``evaluate_compliance`` call with no arguments uses it automatically.
+
+    The optional external scanners (``external.osv`` / ``external.semgrep`` /
+    ``external.trivy``) shell out to third-party tools, so they are **opt-in**:
+    they only run when requested explicitly through ``checks`` or when
+    ``include_external`` is true. A tool that is not installed is ``skipped``
+    (no coverage, never compliance); a tool that produced parseable SARIF is
+    ``completed`` even if it exited non-zero.
 
     R1 semantics: the report exposes the positive ``evidence`` a scanner collected
     for what it actually examined and found clean, plus each scanner's execution
@@ -359,9 +377,54 @@ def run_scans(
     """
     state = _state(ctx)
     try:
-        report = _run_scans(Path(target), checks)
+        report = _run_scans(Path(target), checks, include_external)
     except KeyError as exc:
         raise ToolError(str(exc)) from exc
+    state.last_scan = report
+    return report
+
+
+@mcp.tool
+def import_sarif(
+    ctx: Context,
+    sarif: Annotated[
+        str,
+        "SARIF 2.1.0 document: raw JSON text or a path to a .sarif/.json file "
+        "produced elsewhere.",
+    ],
+    tool_name: Annotated[
+        str | None, "Tool that produced the SARIF; stamped on each finding."
+    ] = None,
+    tool_version: Annotated[
+        str | None, "Version of the producing tool, when known."
+    ] = None,
+    kind: Annotated[
+        str | None,
+        "Mapping kind for the findings (e.g. vuln.dependency, sast.finding, "
+        "container.vuln, iac.misconfig). Defaults to a generic external kind "
+        "that maps to no specific measure.",
+    ] = None,
+) -> ScanReport:
+    """Import a user-provided SARIF report as findings and store the scan.
+
+    Lets an agent bring results produced elsewhere (outside this host) into the
+    audit without running any external tool. Findings use the same conventions
+    as the external scanners: ``method=verified``, ``demonstrates=False`` (a
+    vulnerability is a risk signal, not a proven ENS breach) and the traced
+    tool name/version. ``kind`` maps them to ENS measures; the generic default
+    maps to none, so they are surfaced as risks only. The resulting
+    :class:`ScanReport` becomes the most recent scan for ``evaluate_compliance``.
+    """
+    findings = _import_sarif(
+        sarif, tool_name=tool_name, tool_version=tool_version, kind=kind
+    )
+    report = ScanReport(
+        target="<imported-sarif>",
+        findings=findings,
+        scanners=["external.import"],
+        scanner_status={"external.import": "completed" if findings else "skipped"},
+    )
+    state = _state(ctx)
     state.last_scan = report
     return report
 
@@ -423,6 +486,11 @@ def evaluate_compliance(
     categoria: Annotated[
         str | None, "System category (BASICA, MEDIA, ALTA); enables NO_APLICA."
     ] = None,
+    dimensiones: Annotated[
+        dict[str, str] | None,
+        "Valued security dimensions, e.g. {'Confidencialidad': 'ALTO', 'D': 'MEDIO'}; "
+        "derives the category and the activated refuerzos.",
+    ] = None,
 ) -> ComplianceReport:
     """Consolidate scans and assessments into a per-measure compliance report.
 
@@ -432,6 +500,14 @@ def evaluate_compliance(
     assessment, or a scanner check with ``covers_all=True``). A measure a scanner
     covered and found clean is ``parcial``; no coverage, or coverage whose scanner
     failed, leaves it ``no_evaluable``.
+
+    ``dimensiones`` maps each security dimension (name or ``C``/``I``/``D``/
+    ``A``/``T``) to its level (``BAJO``/``MEDIO``/``ALTO``). When given, the
+    system category and the applicable measures are derived from the valuation
+    (via :func:`~ens_audit.catalog.applicability.compute_applicability`) and the
+    activated refuerzos are recorded; ``categoria`` then acts as an override.
+    The report ``metadata`` carries the valuation (``dimensions``), the derived
+    category and the activated refuerzos (``refuerzos``).
 
     The ``summary`` exposes both the compliance percentage (``compliance_pct``)
     and the evaluation-coverage percentage (``coverage_pct``), and the report
@@ -445,8 +521,15 @@ def evaluate_compliance(
     effective_assessments = (
         assessments if assessments is not None else list(state.assessments.values())
     )
+    effective_dimensions = (
+        _parse_dimensions(dimensiones) if dimensiones else None
+    )
     report = _evaluate_compliance(
-        state.catalog, effective_scan, effective_assessments, categoria
+        state.catalog,
+        effective_scan,
+        effective_assessments,
+        categoria,
+        dimensiones=effective_dimensions,
     )
     state.last_report = report
     return report
@@ -609,6 +692,14 @@ ENS audit methodology (RD 311/2022, Anexo II)
    and records its execution status (completed/failed/skipped). Measures that a
    scanner cannot evidence (documents, management processes, physical controls)
    require a manual record_assessment.
+
+   Optional external tools (OSV-Scanner, Semgrep, Trivy) add verification-grade
+   evidence: they are opt-in (run_scans(include_external=True) or an explicit
+   external.osv/external.semgrep/external.trivy id) so a routine scan never
+   shells out. Their findings map to measures but are non-demonstrative risk
+   signals (demonstrates=False): a detected CVE caps the measure at parcial, it
+   never forces no_cumple. Reports produced elsewhere can be brought in with the
+   import_sarif tool, which produces the same findings.
 
 5. Evaluation
    Call evaluate_compliance to consolidate the scan and the assessments into

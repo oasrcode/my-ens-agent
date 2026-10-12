@@ -141,6 +141,7 @@ def build_evidence(
         evidence.append(
             CheckEvidence(
                 scanner=scanner.id,
+                tool=scanner.id,
                 measure_codes=sorted(covered),
                 checked=description,
                 kind=kind,

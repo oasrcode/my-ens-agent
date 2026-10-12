@@ -1,0 +1,11 @@
+[project]
+name = "vulnerable-fixture"
+version = "0.0.0"
+dependencies = [
+    "urllib3>=1.26",
+    "cryptography",
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+flask = "^2.0"

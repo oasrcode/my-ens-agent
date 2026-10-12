@@ -13,13 +13,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..catalog.models import Catalog, Medida
-from ..models import ComplianceReport, Evidence, MeasureVerdict, Verdict
+from ..models import ComplianceReport, Evidence, EvidenceState, MeasureVerdict, Verdict
 from . import (
     _human_note,
+    activated_refuerzos,
     checked_label_es,
+    dimension_levels,
+    evidence_state_label_es,
     positive_evidence_items,
     result_label_es,
+    risk_items,
     scanner_status_items,
+    trace_source_label,
+    traceability_map,
 )
 
 __all__ = ["render_markdown", "write_markdown"]
@@ -31,6 +37,15 @@ _VERDICT_LABELS: dict[str, str] = {
     Verdict.PARCIAL.value: "Parcial",
     Verdict.NO_APLICA.value: "No aplica",
     Verdict.NO_EVALUABLE.value: "No evaluable",
+}
+
+#: Human-readable Spanish labels for a finding severity.
+_SEVERITY_LABELS: dict[str, str] = {
+    "critical": "Crítica",
+    "high": "Alta",
+    "medium": "Media",
+    "low": "Baja",
+    "info": "Informativa",
 }
 
 #: Verdicts rendered as non-conformities (major: no cumple; minor: parcial).
@@ -65,6 +80,16 @@ _STRINGS: dict[str, dict[str, str]] = {
         "compliance_pct": "Porcentaje de cumplimiento",
         "scope": "Alcance y metodología",
         "categorisation": "Categorización",
+        "dims_refuerzos": "Dimensiones y refuerzos",
+        "dims_refuerzos_lead": (
+            "Valoración de las dimensiones de seguridad y refuerzos activados a "
+            "partir de ella."
+        ),
+        "dimension": "Dimensión",
+        "level": "Nivel",
+        "activated_refuerzos": "Refuerzos activados",
+        "no_activated_refuerzos": "Sin refuerzos activados para la valoración dada.",
+        "no_dimension_valuation": "Sin valoración por dimensiones registrada.",
         "compliance_label": "Cumplimiento",
         "coverage_label": "Cobertura de evaluación",
         "applicable": "medidas aplicables",
@@ -89,6 +114,27 @@ _STRINGS: dict[str, dict[str, str]] = {
         "code": "Código",
         "measure": "Medida",
         "marco_family": "Marco / Familia",
+        "evidence_state": "Estado de la evidencia",
+        "requirements": "Requisitos",
+        "refuerzos": "Refuerzos",
+        "traceability": "Trazabilidad",
+        "evidence_state_summary": "Estados de la evidencia",
+        "evidence_state_summary_lead": (
+            "Recuento de medidas según el estado de la evidencia: no comprobado, "
+            "no detectado, riesgo detectado, no concluyente, cumplimiento "
+            "demostrado e incumplimiento demostrado."
+        ),
+        "risks": "Riesgos",
+        "risks_lead": (
+            "Señales de riesgo no demostrativas (por ejemplo, vulnerabilidades o "
+            "dependencias sin fijar): no acreditan incumplimiento, pero deben "
+            "revisarse."
+        ),
+        "no_risks": "Sin señales de riesgo registradas.",
+        "risk": "Riesgo",
+        "severity": "Severidad",
+        "measures": "Medidas",
+        "tool_method": "Herramienta/Método",
         "non_conformities": "No conformidades",
         "recommendations": "Recomendaciones",
         "rationale": "Justificación",
@@ -220,6 +266,28 @@ def _render_summary(report: ComplianceReport, t: dict[str, str]) -> list[str]:
             f"| {_verdict_label(verdict)} | {count} | {pct} % |"
         )
     lines.append("")
+
+    # Epistemic evidence-state counts (orthogonal to the verdict counts): they
+    # keep "not checked" distinct from "checked and clean" and from "proven".
+    state_rows = [
+        (EvidenceState.NO_COMPROBADO, summary.no_comprobado),
+        (EvidenceState.NO_DETECTADO, summary.no_detectado),
+        (EvidenceState.RIESGO_DETECTADO, summary.riesgo_detectado),
+        (EvidenceState.NO_CONCLUYENTE, summary.no_concluyente),
+        (EvidenceState.CUMPLIMIENTO_DEMOSTRADO, summary.cumplimiento_demostrado),
+        (EvidenceState.INCUMPLIMIENTO_DEMOSTRADO, summary.incumplimiento_demostrado),
+    ]
+    lines += [
+        f"### {t['evidence_state_summary']}",
+        "",
+        f"_{t['evidence_state_summary_lead']}_",
+        "",
+        f"| {t['evidence_state']} | {t['measure_count']} |",
+        "|---|---:|",
+    ]
+    for state, count in state_rows:
+        lines.append(f"| {evidence_state_label_es(state)} | {count} |")
+    lines.append("")
     return lines
 
 
@@ -296,10 +364,13 @@ def _render_scope(
             "Metodología: los veredictos se consolidan con `evaluate_compliance` "
             "siguiendo este orden de precedencia: (1) evaluación manual explícita; "
             "(2) aplicabilidad según la categoría del sistema; (3) hallazgos de "
-            "los escáneres deterministas; (4) evidencia positiva registrada por "
-            "los escáneres; y (5) sin evidencia ni valoración, la medida se marca "
-            "como no evaluable (la ausencia de hallazgos no es prueba de "
-            "cumplimiento)."
+            "los escáneres que demuestran incumplimiento de un requisito aplicable "
+            "(no conformidad mayor); (4) señales de riesgo no demostrativas (por "
+            "ejemplo, vulnerabilidades detectadas o dependencias sin fijar), que "
+            "acotan la medida a parcial y se listan como riesgos sin forzar un "
+            "incumplimiento; (5) evidencia positiva registrada por los escáneres; "
+            "y (6) sin evidencia ni valoración, la medida se marca como no "
+            "evaluable (la ausencia de hallazgos no es prueba de cumplimiento)."
         ),
         "",
         f"- Escáneres ejecutados: {scanner_list}.",
@@ -327,20 +398,80 @@ def _render_categorisation(report: ComplianceReport, t: dict[str, str]) -> list[
     ]
 
 
+def _render_dimensions_refuerzos(
+    report: ComplianceReport, t: dict[str, str]
+) -> list[str]:
+    """Render the dimension valuation and the activated refuerzos.
+
+    Shows the per-dimension levels carried in the metadata (empty when only a
+    category was supplied) and then the refuerzos the valuation activated, one
+    bullet per measure.
+    """
+    levels = dimension_levels(report)
+    refuerzos = activated_refuerzos(report)
+    lines = [f"## {t['dims_refuerzos']}", "", f"_{t['dims_refuerzos_lead']}_", ""]
+    if levels:
+        lines += [f"| {t['dimension']} | {t['level']} |", "|---|---|"]
+        lines += [
+            f"| {_cell(dimension)} | {_cell(level)} |"
+            for dimension, level in levels
+        ]
+    else:
+        lines.append(f"_{t['no_dimension_valuation']}_")
+    lines += ["", f"### {t['activated_refuerzos']}", ""]
+    if refuerzos:
+        for code in sorted(refuerzos):
+            refs = ", ".join(
+                f"`{_cell(refuerzo)}`" for refuerzo in refuerzos[code]
+            )
+            lines.append(f"- `{_cell(code)}`: {refs}.")
+    else:
+        lines.append(f"_{t['no_activated_refuerzos']}_")
+    lines.append("")
+    return lines
+
+
+def _refs_cell(verdict: MeasureVerdict) -> str:
+    """Render a measure's requirement/refuerzo references as one cell."""
+    parts: list[str] = []
+    if verdict.requirement_refs:
+        parts.append("REQ: " + ", ".join(verdict.requirement_refs))
+    if verdict.refuerzo_refs:
+        parts.append("REF: " + ", ".join(verdict.refuerzo_refs))
+    return " · ".join(parts) if parts else "—"
+
+
+def _trace_cell(entries: list[dict[str, object]]) -> str:
+    """Render the distinct tool/method chain of a measure as one cell."""
+    labels: list[str] = []
+    for entry in entries:
+        label = trace_source_label(entry)
+        if label not in labels:
+            labels.append(label)
+    return ", ".join(labels) if labels else "—"
+
+
 def _render_measures_table(
     report: ComplianceReport,
     catalog: Catalog | None,
     t: dict[str, str],
 ) -> list[str]:
-    """Render the full table of measures (one row per catalog measure)."""
+    """Render the full table of measures (one row per catalog measure).
+
+    Besides the verdict, each row shows the *evidence state* and, where
+    available, the traceability chain ``medida -> requisito/refuerzo ->
+    herramienta(+versión) -> método``.
+    """
+    trace = traceability_map(report)
     lines = [
         f"## {t['measures_table']}",
         "",
         (
             f"| {t['code']} | {t['measure']} | {t['marco_family']} | "
-            f"{t['verdict']} |"
+            f"{t['evidence_state']} | {t['requirements']} / {t['refuerzos']} | "
+            f"{t['traceability']} | {t['verdict']} |"
         ),
-        "|---|---|---|---|",
+        "|---|---|---|---|---|---|---|",
     ]
     for verdict in _ordered_verdicts(report, catalog):
         medida = _measure_of(catalog, verdict.measure_code)
@@ -353,6 +484,9 @@ def _render_measures_table(
         lines.append(
             f"| `{_cell(verdict.measure_code)}` | {_cell(name)} | "
             f"{_cell(marco_family)} | "
+            f"{_cell(evidence_state_label_es(verdict.evidence_state))} | "
+            f"{_cell(_refs_cell(verdict))} | "
+            f"{_cell(_trace_cell(trace.get(verdict.measure_code, [])))} | "
             f"{_verdict_label(verdict.verdict)} |"
         )
     lines.append("")
@@ -388,6 +522,38 @@ def _render_non_conformities(
         else:
             lines.append(f"- **{t['evidence']}:** {t['no_evidence']}")
         lines.append("")
+    return lines
+
+
+def _render_risks(report: ComplianceReport, t: dict[str, str]) -> list[str]:
+    """Render the non-demonstrated findings as a distinct risks table.
+
+    Each row carries the localized rule label, severity, the mapped measures and
+    the traceability column (tool + version + method) so a risk always shows
+    *which* tool, at *which* version, produced it.
+    """
+    items = risk_items(report)
+    lines = [f"## {t['risks']}", "", f"_{t['risks_lead']}_", ""]
+    if not items:
+        lines += [f"_{t['no_risks']}_", ""]
+        return lines
+    lines += [
+        (
+            f"| {t['risk']} | {t['severity']} | {t['measures']} | "
+            f"{t['tool_method']} |"
+        ),
+        "|---|---|---|---|",
+    ]
+    for item in items:
+        severity = _SEVERITY_LABELS.get(item["severity"], item["severity"])
+        label = checked_label_es({"kind": item["kind"], "checked": item["message"]})
+        measures = ", ".join(item["measure_codes"]) or "—"
+        source = trace_source_label(item)
+        lines.append(
+            f"| {_cell(label)} | {_cell(severity)} | `{_cell(measures)}` | "
+            f"{_cell(source)} |"
+        )
+    lines.append("")
     return lines
 
 
@@ -457,10 +623,12 @@ def render_markdown(
     lines += _render_summary(report, t)
     lines += _render_scope(report, t, catalog)
     lines += _render_categorisation(report, t)
+    lines += _render_dimensions_refuerzos(report, t)
     lines += _render_positive_evidence(report, t)
     lines += _render_scanner_status(report, t)
     lines += _render_measures_table(report, catalog, t)
     lines += _render_non_conformities(report, catalog, t)
+    lines += _render_risks(report, t)
     lines += _render_recommendations(report, catalog, t)
     return "\n".join(lines).rstrip() + "\n"
 

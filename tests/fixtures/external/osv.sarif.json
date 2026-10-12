@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "osv-scanner",
+          "informationUri": "https://github.com/google/osv-scanner",
+          "version": "1.7.1",
+          "rules": [
+            {
+              "id": "GHSA-jfh8-c2jp-5v3q",
+              "shortDescription": {
+                "text": "Prototype pollution in lodash"
+              }
+            },
+            {
+              "id": "GHSA-8f4m-hccc-8qph",
+              "shortDescription": {
+                "text": "Unintended leak of Proxy-Authorization header in requests"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "GHSA-jfh8-c2jp-5v3q",
+          "level": "warning",
+          "message": {
+            "text": "Package lodash is vulnerable to prototype pollution (GHSA-jfh8-c2jp-5v3q)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package.json"
+                },
+                "region": {
+                  "startLine": 12
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "GHSA-8f4m-hccc-8qph",
+          "level": "error",
+          "message": {
+            "text": "Package requests is vulnerable to CVE-2023-32681."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt"
+                },
+                "region": {
+                  "startLine": 3
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

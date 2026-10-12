@@ -1,0 +1,29 @@
+# Intentionally insecure fixture: privileged container, host network, a
+# plaintext secret and no NetworkPolicy restricting traffic.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-target
+  labels:
+    app: audit-target
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: audit-target
+  template:
+    metadata:
+      labels:
+        app: audit-target
+    spec:
+      hostNetwork: true
+      containers:
+        - name: api
+          image: registry.example.net/audit-target:latest
+          securityContext:
+            privileged: true
+          env:
+            - name: DB_PASSWORD
+              value: S3cr3t-Passw0rd-For-Demo
+          ports:
+            - containerPort: 8000

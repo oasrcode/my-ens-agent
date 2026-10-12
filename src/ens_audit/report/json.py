@@ -14,12 +14,19 @@ from pathlib import Path
 
 from ..catalog.models import Catalog
 from ..models import ComplianceReport, Evidence, MeasureVerdict
-from . import positive_evidence_items, scanner_status_items
+from . import (
+    activated_refuerzos,
+    dimension_levels,
+    positive_evidence_items,
+    risk_items,
+    scanner_status_items,
+    traceability_map,
+)
 
 __all__ = ["render_json", "write_json"]
 
 #: Current JSON schema version of the rendered document.
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.6"
 
 
 def _ordered_verdicts(
@@ -75,6 +82,13 @@ def _summary_to_dict(report: ComplianceReport) -> dict[str, object]:
         "applicable": _summary_value(summary, metadata, "applicable"),
         "compliance_pct": _summary_value(summary, metadata, "compliance_pct"),
         "coverage_pct": _summary_value(summary, metadata, "coverage_pct"),
+        # Epistemic evidence-state counts (orthogonal to the verdict counts).
+        "no_comprobado": summary.no_comprobado,
+        "no_detectado": summary.no_detectado,
+        "riesgo_detectado": summary.riesgo_detectado,
+        "no_concluyente": summary.no_concluyente,
+        "cumplimiento_demostrado": summary.cumplimiento_demostrado,
+        "incumplimiento_demostrado": summary.incumplimiento_demostrado,
     }
 
 
@@ -82,6 +96,7 @@ def build_document(
     report: ComplianceReport, catalog: Catalog | None = None
 ) -> dict[str, object]:
     """Build the JSON-serializable document for ``report``."""
+    trace = traceability_map(report)
     verdicts: list[dict[str, object]] = []
     for verdict in _ordered_verdicts(report, catalog):
         medida = catalog.medidas.get(verdict.measure_code) if catalog else None
@@ -90,6 +105,10 @@ def build_document(
                 "code": verdict.measure_code,
                 "name": medida.name if medida is not None else "",
                 "verdict": verdict.verdict.value,
+                "evidence_state": verdict.evidence_state.value,
+                "requirement_refs": list(verdict.requirement_refs),
+                "refuerzo_refs": list(verdict.refuerzo_refs),
+                "traceability": trace.get(verdict.measure_code, []),
                 "evidence": [
                     _evidence_to_dict(evidence) for evidence in verdict.evidence
                 ],
@@ -100,8 +119,13 @@ def build_document(
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
         "category": report.category,
+        # Per-dimension valuation used to derive applicability (empty when only a
+        # category was supplied) and the refuerzos it activated per measure.
+        "dimensions": dict(dimension_levels(report)),
+        "refuerzos": activated_refuerzos(report),
         "summary": _summary_to_dict(report),
         "evidence": positive_evidence_items(report),
+        "risks": risk_items(report),
         "scanner_status": scanner_status_items(report),
         "verdicts": verdicts,
     }

@@ -1,0 +1,5 @@
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention_days: 30
+  target: s3://example-backups

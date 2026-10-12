@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..catalog.models import Catalog
-from ..models import CheckEvidence, ComplianceReport, ScanReport
+from ..models import CheckEvidence, ComplianceReport, EvidenceState, ScanReport
 
 #: Auto-generated rationales produced by the evaluator (see
 #: :mod:`ens_audit.evaluate`). They are English and machine-authored, so the
@@ -28,6 +28,10 @@ _AUTO_RATIONALE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^Measure not applicable to category .*\.$"),
     re.compile(r"^\d+ failing scanner finding\(s\) for this measure\.$"),
     re.compile(r"^\d+ passing scanner signal\(s\) for this measure\.$"),
+    re.compile(
+        r"^\d+ demonstrated non-compliance finding\(s\) for this measure\.$"
+    ),
+    re.compile(r"^\d+ non-demonstrated risk signal\(s\) for this measure\.$"),
     re.compile(
         r"^Documentary/organizational or physical measure with no automated "
         r"evidence and no manual assessment\.$"
@@ -77,10 +81,39 @@ KIND_LABELS_ES: dict[str, str] = {
     "network.service_exposed": "Exposición de servicios de red",
     "storage.unencrypted": "Cifrado de la información en reposo",
     "backup.disabled": "Copias de seguridad y su retención",
+    # External (verified) scanner kinds.
+    "vuln.dependency": "Vulnerabilidades conocidas en dependencias",
+    "container.vuln": "Vulnerabilidades en imágenes y componentes de contenedor",
+    "sast.finding": "Hallazgos de análisis estático (SAST)",
+    "iac.misconfig": "Configuración incorrecta de infraestructura (IaC)",
 }
 
 #: Spanish labels for the machine-facing ``CheckEvidence.result`` values.
 RESULT_LABELS_ES: dict[str, str] = {"pass": "correcto"}
+
+#: Spanish labels for the epistemic :class:`EvidenceState` values.
+EVIDENCE_STATE_LABELS_ES: dict[str, str] = {
+    EvidenceState.NO_APLICA.value: "No aplica",
+    EvidenceState.NO_COMPROBADO.value: "No comprobado",
+    EvidenceState.NO_DETECTADO.value: "No detectado",
+    EvidenceState.RIESGO_DETECTADO.value: "Riesgo detectado",
+    EvidenceState.NO_CONCLUYENTE.value: "No concluyente",
+    EvidenceState.CUMPLIMIENTO_DEMOSTRADO.value: "Cumplimiento demostrado",
+    EvidenceState.INCUMPLIMIENTO_DEMOSTRADO.value: "Incumplimiento demostrado",
+}
+
+#: Spanish labels for the independent ``Method`` axis.
+METHOD_LABELS_ES: dict[str, str] = {
+    "heuristic": "heurístico",
+    "verified": "verificado",
+}
+
+#: Spanish labels for the independent ``Confidence`` axis.
+CONFIDENCE_LABELS_ES: dict[str, str] = {
+    "low": "baja",
+    "medium": "media",
+    "high": "alta",
+}
 
 
 def checked_label_es(item: Mapping[str, Any]) -> str:
@@ -106,6 +139,29 @@ def result_label_es(item: Mapping[str, Any]) -> str:
     """
     result = str(item.get("result") or "")
     return RESULT_LABELS_ES.get(result, result)
+
+
+def _enum_value(value: Any) -> str:
+    """Return the serialized value of an enum member or a raw string."""
+    return str(getattr(value, "value", value) or "")
+
+
+def evidence_state_label_es(value: Any) -> str:
+    """Return the Spanish label of an :class:`EvidenceState` (or raw string)."""
+    raw = _enum_value(value)
+    return EVIDENCE_STATE_LABELS_ES.get(raw, raw)
+
+
+def method_label_es(value: Any) -> str:
+    """Return the Spanish label of a ``Method`` (or raw string)."""
+    raw = _enum_value(value)
+    return METHOD_LABELS_ES.get(raw, raw)
+
+
+def confidence_label_es(value: Any) -> str:
+    """Return the Spanish label of a ``Confidence`` (or raw string)."""
+    raw = _enum_value(value)
+    return CONFIDENCE_LABELS_ES.get(raw, raw)
 
 
 def _normalise_observed_at(value: object) -> str:
@@ -171,6 +227,12 @@ def positive_evidence_items(report: ComplianceReport) -> list[dict[str, Any]]:
         items.append(
             {
                 "scanner": str(data.get("scanner") or ""),
+                "tool": str(data.get("tool") or data.get("scanner") or ""),
+                "tool_version": (
+                    str(data["tool_version"]) if data.get("tool_version") else ""
+                ),
+                "method": _enum_value(data.get("method")),
+                "confidence": _enum_value(data.get("confidence")),
                 "measure_codes": [
                     str(code) for code in (data.get("measure_codes") or [])
                 ],
@@ -180,6 +242,12 @@ def positive_evidence_items(report: ComplianceReport) -> list[dict[str, Any]]:
                 "result": str(data.get("result") or ""),
                 "observed_at": _normalise_observed_at(data.get("observed_at")),
                 "covers_all": bool(data.get("covers_all", False)),
+                "requirement_refs": [
+                    str(ref) for ref in (data.get("requirement_refs") or [])
+                ],
+                "refuerzo_refs": [
+                    str(ref) for ref in (data.get("refuerzo_refs") or [])
+                ],
             }
         )
     return items
@@ -199,6 +267,141 @@ def scanner_status_items(report: ComplianceReport) -> dict[str, str]:
     return {str(scanner): str(status) for scanner, status in (raw or {}).items()}
 
 
+def _str_list(values: Any) -> list[str]:
+    """Coerce a value to a list of strings (empty list when absent)."""
+    if not values:
+        return []
+    return [str(value) for value in values]
+
+
+def _entry_demonstrates(entry: Any) -> bool:
+    """Whether a raw finding entry demonstrates non-compliance.
+
+    Findings default to ``demonstrates=True`` and a mapping missing the key is
+    treated the same way: only an explicit ``False`` marks a risk signal.
+    """
+    if hasattr(entry, "demonstrates"):
+        return bool(entry.demonstrates)
+    if isinstance(entry, Mapping):
+        return bool(entry.get("demonstrates", True))
+    return True
+
+
+def risk_items(report: ComplianceReport) -> list[dict[str, Any]]:
+    """Normalise the non-demonstrated findings (risks) from the metadata.
+
+    Risks are the findings that carry ``demonstrates=False``: they never force
+    ``no_cumple`` and are surfaced in a dedicated report section. The ``kind``
+    key mirrors ``id`` so renderers can localize a known rule id through
+    :func:`checked_label_es`.
+
+    When ``metadata['risks']`` is absent the report falls back to the scan
+    report's findings, which include the demonstrated failures too; only the
+    non-demonstrated (``demonstrates=False``) ones are returned, because a
+    demonstrated finding is a non-conformity, not a risk.
+    """
+    raw = report.metadata.get("risks")
+    if raw is None:
+        scan = _metadata_scan_report(report)
+        raw = (
+            [finding for finding in scan.findings if not _entry_demonstrates(finding)]
+            if scan is not None
+            else []
+        )
+    items: list[dict[str, Any]] = []
+    for entry in raw or []:
+        if hasattr(entry, "model_dump"):
+            data: dict[str, Any] = entry.model_dump(mode="json")
+        elif isinstance(entry, Mapping):
+            data = dict(entry)
+        else:  # pragma: no cover - defensive guard
+            continue
+        raw_id = str(data.get("id") or "")
+        items.append(
+            {
+                "id": raw_id,
+                "kind": raw_id or None,
+                "severity": _enum_value(data.get("severity")),
+                "message": str(data.get("message") or ""),
+                "measure_codes": _str_list(data.get("measure_codes")),
+                "tool": str(data.get("tool") or data.get("scanner") or ""),
+                "tool_version": (
+                    str(data["tool_version"]) if data.get("tool_version") else ""
+                ),
+                "method": _enum_value(data.get("method")),
+                "confidence": _enum_value(data.get("confidence")),
+                "requirement_refs": _str_list(data.get("requirement_refs")),
+                "refuerzo_refs": _str_list(data.get("refuerzo_refs")),
+            }
+        )
+    return items
+
+
+def traceability_map(
+    report: ComplianceReport,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return the per-measure traceability chain carried in the metadata.
+
+    The evaluator stores the chain (``medida -> requisito/refuerzo ->
+    herramienta(+versión) -> método -> evidencia``) under
+    ``metadata['traceability']``; hand-built reports without it degrade to an
+    empty mapping.
+    """
+    raw = report.metadata.get("traceability")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {}
+    for code, entries in raw.items():
+        if not isinstance(entries, (list, tuple)):
+            continue
+        result[str(code)] = [
+            dict(entry) for entry in entries if isinstance(entry, Mapping)
+        ]
+    return result
+
+
+def dimension_levels(report: ComplianceReport) -> list[tuple[str, str]]:
+    """Normalise the report's per-dimension valuation to ordered pairs.
+
+    The evaluator stores the explicit valuation under ``metadata['dimensions']``
+    as a ``{dimension: level}`` mapping; a report without one (category-only
+    evaluation, or a hand-built report) degrades to an empty list.
+    """
+    raw = report.metadata.get("dimensions")
+    if not isinstance(raw, Mapping):
+        return []
+    return [(str(dimension), str(level)) for dimension, level in raw.items()]
+
+
+def activated_refuerzos(report: ComplianceReport) -> dict[str, list[str]]:
+    """Normalise the metadata's activated refuerzos to ``{measure: [id]}``.
+
+    The evaluator stores the refuerzos activated by the dimension valuation
+    under ``metadata['refuerzos']``; measure codes with no activated refuerzo
+    are omitted (or degrade to an empty mapping when the key is absent).
+    """
+    raw = report.metadata.get("refuerzos")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, list[str]] = {}
+    for code, refs in raw.items():
+        normalized = _str_list(refs)
+        if normalized:
+            result[str(code)] = normalized
+    return result
+
+
+def trace_source_label(entry: Mapping[str, Any]) -> str:
+    """Render one traceability source as a compact Spanish chain fragment."""
+    tool = str(entry.get("tool") or entry.get("scanner") or "—")
+    version = entry.get("tool_version")
+    if version:
+        tool = f"{tool} {version}"
+    method = method_label_es(entry.get("method"))
+    confidence = confidence_label_es(entry.get("confidence"))
+    return f"{tool} ({method}, {confidence})"
+
+
 # Imported after the shared rationale helpers so the sibling renderers can
 # import them back from this package without a circular import; the ordering
 # below the definitions is therefore intentional.
@@ -206,14 +409,25 @@ from .json import build_document, render_json, write_json
 from .markdown import render_markdown, write_markdown
 
 __all__ = [
+    "CONFIDENCE_LABELS_ES",
+    "EVIDENCE_STATE_LABELS_ES",
     "KIND_LABELS_ES",
+    "METHOD_LABELS_ES",
     "RESULT_LABELS_ES",
+    "activated_refuerzos",
     "build_document",
     "checked_label_es",
+    "confidence_label_es",
+    "dimension_levels",
+    "evidence_state_label_es",
+    "method_label_es",
     "render_json",
     "render_markdown",
     "render_report",
     "result_label_es",
+    "risk_items",
+    "trace_source_label",
+    "traceability_map",
     "write_json",
     "write_markdown",
 ]

@@ -1,0 +1,4 @@
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  target: s3://example-backups

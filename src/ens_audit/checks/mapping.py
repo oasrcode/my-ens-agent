@@ -185,6 +185,100 @@ MEASURE_MAP: dict[str, list[MeasureRef]] = {
             guides=["CCN-STIC-807"],
         ),
     ],
+    # -- external (verified) scanner kinds ------------------------------------
+    # These are emitted by the optional third-party tools of
+    # ``ens_audit.checks.external``. They are *verified* observations, but a
+    # detected vulnerability or misconfiguration is a risk signal, not proof of
+    # an ENS breach: the findings stay non-demonstrative (demonstrates=False)
+    # and cap the mapped measures at ``parcial``.
+    "vuln.dependency": [
+        MeasureRef(
+            code="op.exp.4",
+            rationale=(
+                "A dependency with a known vulnerability is missing the security "
+                "updates that maintenance must apply."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+        MeasureRef(
+            code="op.exp.6",
+            rationale=(
+                "A known-vulnerable dependency is a vector for malicious code "
+                "exploitation."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+        MeasureRef(
+            code="op.ext.3",
+            rationale=(
+                "Third-party components are part of the supply chain that must "
+                "be protected."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+    ],
+    "container.vuln": [
+        MeasureRef(
+            code="op.exp.4",
+            rationale=(
+                "A container image or packaged component with a known "
+                "vulnerability misses the security updates maintenance must apply."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+        MeasureRef(
+            code="op.exp.6",
+            rationale=(
+                "A vulnerable image component can carry malicious code into the "
+                "running system."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+        MeasureRef(
+            code="op.ext.3",
+            rationale=(
+                "Base images and their packages are part of the supply chain that "
+                "must be protected."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+    ],
+    "sast.finding": [
+        MeasureRef(
+            code="mp.sw.1",
+            rationale=(
+                "A static-analysis finding is a secure-development defect in the "
+                "application lifecycle."
+            ),
+            guides=["CCN-STIC-812"],
+        ),
+        MeasureRef(
+            code="mp.sw.2",
+            rationale=(
+                "Defects that survive to the acceptance test should have been "
+                "caught before putting the service into operation."
+            ),
+            guides=["CCN-STIC-812"],
+        ),
+    ],
+    "iac.misconfig": [
+        MeasureRef(
+            code="op.exp.2",
+            rationale=(
+                "An infrastructure-as-code misconfiguration is an insecure "
+                "configuration of the information system."
+            ),
+            guides=["CCN-STIC-808", "CCN-STIC-812"],
+        ),
+        MeasureRef(
+            code="op.exp.3",
+            rationale=(
+                "Configuration must be managed and hardened: a detected "
+                "misconfiguration is a configuration-management defect."
+            ),
+            guides=["CCN-STIC-808"],
+        ),
+    ],
 }
 
 

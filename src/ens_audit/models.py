@@ -48,6 +48,79 @@ class Severity(str, Enum):
     INFO = "info"
 
 
+class Method(str, Enum):
+    """How a piece of evidence was obtained.
+
+    One of the three independent axes (method / confidence / scope) the audit
+    model never conflates. ``HEURISTIC`` is pattern-based detection;
+    ``VERIFIED`` is confirmation by a tool or an explicit rule.
+    """
+
+    HEURISTIC = "heuristic"
+    VERIFIED = "verified"
+
+
+class Confidence(str, Enum):
+    """Confidence in a piece of evidence.
+
+    Independent from both the method and the scope: a verified piece of evidence
+    can still be low-confidence, and vice versa.
+    """
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class EvidenceState(str, Enum):
+    """Epistemic state of the evidence behind a measure verdict.
+
+    Deliberately distinguishes *not checked* from *checked and found clean* and
+    from *demonstrated compliance* (and its opposite):
+
+    * ``no_aplica`` -- the measure is not applicable to the system.
+    * ``no_comprobado`` -- no coverage (no scanner examined it, or the scanner
+      failed/was skipped). Absence of evidence is never compliance.
+    * ``no_detectado`` -- it was checked and **nothing was found**; this is
+      strictly "clean", and it is **not** proof of compliance, hence it maps to
+      ``parcial``.
+    * ``riesgo_detectado`` -- the only signals found were non-demonstrated
+      risk findings (e.g. a detected CVE or an unpinned dependency). Such a
+      signal does not demonstrate non-compliance, so it maps to ``parcial`` and
+      is surfaced separately as a risk; it is distinct from ``no_detectado``
+      (where nothing was found).
+    * ``no_concluyente`` -- a manual (human) judgement that is not itself a
+      demonstrated outcome, e.g. a manual ``parcial`` assessment. A human
+      partial judgement is neither *checked and found clean* (``no_detectado``)
+      nor a machine-detected risk (``riesgo_detectado``), so it gets its own
+      neutral state.
+    * ``cumplimiento_demostrado`` -- sufficient positive evidence exists.
+    * ``incumplimiento_demostrado`` -- an applicable requirement is
+      demonstrably not met.
+    """
+
+    NO_APLICA = "no_aplica"
+    NO_COMPROBADO = "no_comprobado"
+    NO_DETECTADO = "no_detectado"
+    RIESGO_DETECTADO = "riesgo_detectado"
+    NO_CONCLUYENTE = "no_concluyente"
+    CUMPLIMIENTO_DEMOSTRADO = "cumplimiento_demostrado"
+    INCUMPLIMIENTO_DEMOSTRADO = "incumplimiento_demostrado"
+
+
+#: Maps an :class:`EvidenceState` to the :class:`ComplianceSummary` counter it
+#: increments. ``NO_APLICA`` has no counter: it duplicates the ``no_aplica``
+#: verdict count.
+_EVIDENCE_STATE_COUNT_FIELDS: dict[EvidenceState, str] = {
+    EvidenceState.NO_COMPROBADO: "no_comprobado",
+    EvidenceState.NO_DETECTADO: "no_detectado",
+    EvidenceState.RIESGO_DETECTADO: "riesgo_detectado",
+    EvidenceState.NO_CONCLUYENTE: "no_concluyente",
+    EvidenceState.CUMPLIMIENTO_DEMOSTRADO: "cumplimiento_demostrado",
+    EvidenceState.INCUMPLIMIENTO_DEMOSTRADO: "incumplimiento_demostrado",
+}
+
+
 class Evidence(BaseModel):
     """A pointer to the evidence backing a finding or an assessment."""
 
@@ -65,6 +138,23 @@ class Finding(BaseModel):
     measure_codes: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     scanner: str | None = None
+    # -- traceability (independent axes; never conflated) ---------------------
+    #: Tool that produced the finding (the scanner id by default).
+    tool: str | None = None
+    #: Version of the producing tool, when known.
+    tool_version: str | None = None
+    #: Detection method (heuristic pattern vs explicit verification).
+    method: Method = Method.HEURISTIC
+    #: Confidence in the finding.
+    confidence: Confidence = Confidence.MEDIUM
+    #: ENS requirement ids of the measures this finding concerns.
+    requirement_refs: list[str] = Field(default_factory=list)
+    #: ENS refuerzo ids this finding concerns.
+    refuerzo_refs: list[str] = Field(default_factory=list)
+    #: Whether the finding *demonstrates* non-compliance of an applicable
+    #: requirement. A mere risk signal (e.g. a detected CVE, an unpinned
+    #: dependency) must set this to ``False``: it must never force NO_CUMPLE.
+    demonstrates: bool = True
 
     @property
     def code(self) -> str:
@@ -94,6 +184,19 @@ class CheckEvidence(BaseModel):
     observed_at: datetime = Field(default_factory=_utcnow)
     covers_all: bool = False
     evidence: list[Evidence] = Field(default_factory=list)
+    # -- traceability (independent axes; never conflated) ---------------------
+    #: Tool that produced the evidence (the scanner id by default).
+    tool: str | None = None
+    #: Version of the producing tool, when known.
+    tool_version: str | None = None
+    #: Detection method (heuristic pattern vs explicit verification).
+    method: Method = Method.HEURISTIC
+    #: Confidence in the evidence.
+    confidence: Confidence = Confidence.MEDIUM
+    #: ENS requirement ids this evidence concerns.
+    requirement_refs: list[str] = Field(default_factory=list)
+    #: ENS refuerzo ids this evidence concerns.
+    refuerzo_refs: list[str] = Field(default_factory=list)
 
 
 class ScanReport(BaseModel):
@@ -121,8 +224,15 @@ class MeasureVerdict(BaseModel):
 
     measure_code: str
     verdict: Verdict
+    #: Epistemic state of the evidence backing this verdict (see
+    #: :class:`EvidenceState`). Kept on a separate axis from ``verdict``.
+    evidence_state: EvidenceState
     evidence: list[Evidence] = Field(default_factory=list)
     rationale: str = ""
+    #: ENS requirement ids the evidence behind this verdict concerns.
+    requirement_refs: list[str] = Field(default_factory=list)
+    #: ENS refuerzo ids the evidence behind this verdict concerns.
+    refuerzo_refs: list[str] = Field(default_factory=list)
 
 
 class ComplianceSummary(BaseModel):
@@ -134,6 +244,12 @@ class ComplianceSummary(BaseModel):
       is explicitly verified as compliant.
     * ``coverage_pct`` = ``(applicable - no_evaluable) / applicable`` -- how
       much of what applies has *any* evidence (i.e. is not ``no_evaluable``).
+
+    The ``evidence_state`` counts sit on an orthogonal axis to the ``verdict``
+    counts: they distinguish *not checked* (``no_comprobado``) from *checked and
+    clean* (``no_detectado``) from a non-demonstrated *risk* (``riesgo_detectado``)
+    from a neutral manual judgement (``no_concluyente``) from *demonstrated*
+    compliance / non-compliance.
     """
 
     total: int = 0
@@ -145,6 +261,14 @@ class ComplianceSummary(BaseModel):
     applicable: int = 0
     compliance_pct: float = 0.0
     coverage_pct: float = 0.0
+    #: Counts by :class:`EvidenceState` (the ``no_aplica`` state is already
+    #: represented by the ``no_aplica`` verdict count and is not duplicated).
+    no_comprobado: int = 0
+    no_detectado: int = 0
+    riesgo_detectado: int = 0
+    no_concluyente: int = 0
+    cumplimiento_demostrado: int = 0
+    incumplimiento_demostrado: int = 0
 
     @classmethod
     def from_verdicts(cls, verdicts: list[MeasureVerdict]) -> ComplianceSummary:
@@ -156,6 +280,9 @@ class ComplianceSummary(BaseModel):
                 measure_verdict.verdict.value,
                 getattr(summary, measure_verdict.verdict.value) + 1,
             )
+            field = _EVIDENCE_STATE_COUNT_FIELDS.get(measure_verdict.evidence_state)
+            if field is not None:
+                setattr(summary, field, getattr(summary, field) + 1)
         summary.applicable = summary.total - summary.no_aplica
         if summary.applicable:
             summary.compliance_pct = round(

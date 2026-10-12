@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-app
+  template:
+    metadata:
+      labels:
+        app: bad-app
+    spec:
+      hostNetwork: true
+      containers:
+        - name: app
+          image: bad:latest
+          securityContext:
+            privileged: true
+          env:
+            - name: DB_PASSWORD
+              value: supersecret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bad-svc
+spec:
+  selector:
+    app: bad-app
+  ports:
+    - port: 80

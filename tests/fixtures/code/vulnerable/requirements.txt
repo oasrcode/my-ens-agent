@@ -1,0 +1,4 @@
+# Vulnerable fixture: unpinned and deprecated dependencies.
+requests
+flask>=2.0
+pycrypto

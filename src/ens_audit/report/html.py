@@ -31,13 +31,19 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..models import ComplianceReport, Verdict
+from ..models import ComplianceReport, EvidenceState, Verdict
 from . import (
     _human_note,
+    activated_refuerzos,
     checked_label_es,
+    dimension_levels,
+    evidence_state_label_es,
     positive_evidence_items,
     result_label_es,
+    risk_items,
     scanner_status_items,
+    trace_source_label,
+    traceability_map,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import used for typing only
@@ -105,7 +111,35 @@ _STRINGS: dict[str, dict[str, str]] = {
         "code": "Código",
         "measure": "Medida",
         "dimensions": "Dimensiones",
+        "dims_refuerzos": "Dimensiones y refuerzos",
+        "dims_refuerzos_lead": (
+            "Valoración de las dimensiones de seguridad y refuerzos activados a "
+            "partir de ella."
+        ),
+        "level": "Nivel",
+        "activated_refuerzos": "Refuerzos activados",
+        "no_activated_refuerzos": "Sin refuerzos activados para la valoración dada.",
+        "no_dimension_valuation": "Sin valoración por dimensiones registrada.",
         "verdict": "Veredicto",
+        "evidence_state": "Estado de la evidencia",
+        "evidence_state_summary": "Estados de la evidencia",
+        "evidence_state_summary_lead": (
+            "Recuento de medidas según el estado de la evidencia: no comprobado, "
+            "no detectado, riesgo detectado, no concluyente, cumplimiento "
+            "demostrado e incumplimiento demostrado."
+        ),
+        "traceability": "Trazabilidad",
+        "risks": "Riesgos",
+        "risks_lead": (
+            "Señales de riesgo no demostrativas (por ejemplo, vulnerabilidades o "
+            "dependencias sin fijar): no acreditan incumplimiento, pero deben "
+            "revisarse."
+        ),
+        "no_risks": "Sin señales de riesgo registradas.",
+        "risk": "Riesgo",
+        "severity": "Severidad",
+        "risk_measures": "Medidas",
+        "tool_method": "Herramienta/Método",
         "footer_note": (
             "Documento generado automáticamente por ens-audit. "
             "Autocontenido: no referencia recursos externos."
@@ -121,6 +155,15 @@ _VERDICT_LABELS: dict[Verdict, str] = {
     Verdict.PARCIAL: "Parcial",
     Verdict.NO_APLICA: "No aplica",
     Verdict.NO_EVALUABLE: "No evaluable",
+}
+
+#: Human-readable Spanish labels for a finding severity.
+_SEVERITY_LABELS: dict[str, str] = {
+    "critical": "Crítica",
+    "high": "Alta",
+    "medium": "Media",
+    "low": "Baja",
+    "info": "Informativa",
 }
 
 #: Stable, presentation-friendly order for the verdict counts.
@@ -353,11 +396,20 @@ def _render_badge(verdict: Verdict) -> str:
     )
 
 
-def _render_evidence_details(verdict: Any, language: str) -> str:
+def _render_evidence_details(
+    verdict: Any,
+    language: str,
+    trace_entries: list[dict[str, Any]] | None = None,
+) -> str:
     """Render the expandable evidence/rationale block for a measure, if any."""
     note = _human_note(verdict.rationale)
     evidence = list(verdict.evidence)
-    if not note and not evidence:
+    trace_entries = trace_entries or []
+    requirement_refs = list(getattr(verdict, "requirement_refs", []) or [])
+    refuerzo_refs = list(getattr(verdict, "refuerzo_refs", []) or [])
+    if not note and not evidence and not trace_entries and not (
+        requirement_refs or refuerzo_refs
+    ):
         return ""
 
     parts: list[str] = []
@@ -371,6 +423,24 @@ def _render_evidence_details(verdict: Any, language: str) -> str:
         parts.append(
             f'<p class="note"><span class="note-label">'
             f"{_esc(_t(language, 'note'))}:</span> {_esc(note)}</p>"
+        )
+    if requirement_refs or refuerzo_refs:
+        refs: list[str] = []
+        if requirement_refs:
+            refs.append("REQ: " + ", ".join(requirement_refs))
+        if refuerzo_refs:
+            refs.append("REF: " + ", ".join(refuerzo_refs))
+        parts.append(f'<p class="trace-refs">{_esc(" · ".join(refs))}</p>')
+    if trace_entries:
+        labels: list[str] = []
+        for entry in trace_entries:
+            label = trace_source_label(entry)
+            if label not in labels:
+                labels.append(label)
+        parts.append(
+            f'<p class="trace"><span class="trace-label">'
+            f"{_esc(_t(language, 'traceability'))}:</span> "
+            f"{_esc(', '.join(labels))}</p>"
         )
     if evidence:
         parts.append('<ul class="evidence-list">')
@@ -398,8 +468,10 @@ def _render_measure_table(
     meta_rows: list[tuple[_MeasureMeta, Any]],
     familia_nombre: str,
     language: str,
+    trace: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str:
     """Render one familia table with its measure rows and evidence."""
+    trace = trace or {}
     headers = (
         f'<th scope="col">{_esc(_t(language, "code"))}</th>'
         f'<th scope="col">{_esc(_t(language, "measure"))}</th>'
@@ -408,20 +480,24 @@ def _render_measure_table(
     )
     body: list[str] = []
     for meta, verdict in meta_rows:
-        evidence = _render_evidence_details(verdict, language)
+        evidence = _render_evidence_details(
+            verdict, language, trace.get(meta.code, [])
+        )
         evidence_row = (
             f'<tr class="evidence-row"><td colspan="4">{evidence}</td></tr>'
             if evidence
             else ""
         )
         anchor = meta.code.replace(".", "-")
+        state_label = evidence_state_label_es(verdict.evidence_state)
         body.append(
             '<tbody class="measure">'
             f'<tr class="measure-row" id="medida-{_esc(anchor)}">'
             f'<th scope="row" class="m-code"><code>{_esc(meta.code)}</code></th>'
             f'<td class="m-name">{_esc(meta.name)}</td>'
             f'<td class="m-dims">{_esc(meta.dimensions)}</td>'
-            f'<td class="m-verdict">{_render_badge(verdict.verdict)}</td>'
+            f'<td class="m-verdict">{_render_badge(verdict.verdict)}'
+            f'<span class="ev-state-badge">{_esc(state_label)}</span></td>'
             "</tr>"
             f"{evidence_row}"
             "</tbody>"
@@ -441,6 +517,7 @@ def _render_measures(
     language: str,
 ) -> str:
     """Render the full measure detail grouped by marco and familia."""
+    trace = traceability_map(report)
     # Group in report order, preserving first-seen marco/familia ordering.
     groups: dict[tuple[str, str, str], list[tuple[_MeasureMeta, Any]]] = {}
     order: list[tuple[str, str, str]] = []
@@ -475,7 +552,7 @@ def _render_measures(
             if familia_nombre != _marco_title(marco):
                 sections.append(f'<h3 class="familia">{_esc(familia_nombre)}</h3>')
             sections.append(
-                _render_measure_table(groups[key], familia_nombre, language)
+                _render_measure_table(groups[key], familia_nombre, language, trace)
             )
     return "".join(sections)
 
@@ -497,6 +574,21 @@ def _render_summary(report: ComplianceReport, language: str) -> str:
     coverage = _coverage_pct(report)
     applicable = _applicable_count(report)
     covered = applicable - summary.no_evaluable
+    state_rows = [
+        (EvidenceState.NO_COMPROBADO, summary.no_comprobado),
+        (EvidenceState.NO_DETECTADO, summary.no_detectado),
+        (EvidenceState.RIESGO_DETECTADO, summary.riesgo_detectado),
+        (EvidenceState.NO_CONCLUYENTE, summary.no_concluyente),
+        (EvidenceState.CUMPLIMIENTO_DEMOSTRADO, summary.cumplimiento_demostrado),
+        (EvidenceState.INCUMPLIMIENTO_DEMOSTRADO, summary.incumplimiento_demostrado),
+    ]
+    states = "".join(
+        '<li class="ev-state">'
+        f'<span class="ev-state-value">{count}</span>'
+        f'<span class="ev-state-label">{_esc(evidence_state_label_es(state))}</span>'
+        "</li>"
+        for state, count in state_rows
+    )
     return (
         '<section class="summary" aria-labelledby="h-resumen">'
         f'<h2 id="h-resumen">{_esc(_t(language, "summary"))}</h2>'
@@ -528,6 +620,9 @@ def _render_summary(report: ComplianceReport, language: str) -> str:
         "</div>"
         f'<ul class="stats">{"".join(tiles)}</ul>'
         "</div>"
+        f'<h3 class="ev-states-title">{_esc(_t(language, "evidence_state_summary"))}</h3>'
+        f'<p class="lead">{_esc(_t(language, "evidence_state_summary_lead"))}</p>'
+        f'<ul class="ev-states">{states}</ul>'
         "</section>"
     )
 
@@ -618,6 +713,56 @@ def _render_scanner_status(report: ComplianceReport, language: str) -> str:
     )
 
 
+def _render_dimensions_refuerzos(
+    report: ComplianceReport, language: str
+) -> str:
+    """Render the dimension valuation and the refuerzos it activated."""
+    levels = dimension_levels(report)
+    refuerzos = activated_refuerzos(report)
+    if levels:
+        rows = "".join(
+            f"<tr><td>{_esc(dimension)}</td><td>{_esc(level)}</td></tr>"
+            for dimension, level in levels
+        )
+        table = (
+            '<div class="table-wrap"><table>'
+            "<thead><tr>"
+            f'<th scope="col">{_esc(_t(language, "dimensions"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "level"))}</th>'
+            "</tr></thead>"
+            f"<tbody>{rows}</tbody></table></div>"
+        )
+    else:
+        table = (
+            f'<p class="empty">{_esc(_t(language, "no_dimension_valuation"))}</p>'
+        )
+    if refuerzos:
+        items = "".join(
+            '<li class="refuerzo-item">'
+            f'<code>{_esc(code)}</code>: '
+            + ", ".join(
+                f"<code>{_esc(ref)}</code>" for ref in refuerzos[code]
+            )
+            + "</li>"
+            for code in sorted(refuerzos)
+        )
+        refuerzos_body = f'<ul class="refuerzo-list">{items}</ul>'
+    else:
+        refuerzos_body = (
+            f'<p class="empty">{_esc(_t(language, "no_activated_refuerzos"))}</p>'
+        )
+    return (
+        '<section class="dimensions" aria-labelledby="h-dimensiones">'
+        f'<h2 id="h-dimensiones">{_esc(_t(language, "dims_refuerzos"))}</h2>'
+        f'<p class="lead">{_esc(_t(language, "dims_refuerzos_lead"))}</p>'
+        f"{table}"
+        f'<h3 class="refuerzos-title">'
+        f'{_esc(_t(language, "activated_refuerzos"))}</h3>'
+        f"{refuerzos_body}"
+        "</section>"
+    )
+
+
 def _render_nonconformities(
     report: ComplianceReport, catalog: Catalog | None, language: str
 ) -> str:
@@ -645,6 +790,50 @@ def _render_nonconformities(
         '<section class="nonconformities" aria-labelledby="h-nc">'
         f'<h2 id="h-nc">{_esc(_t(language, "nonconformities"))}</h2>'
         f'<p class="lead">{_esc(_t(language, "nonconformities_lead"))}</p>'
+        f"{body}"
+        "</section>"
+    )
+
+
+def _render_risks(report: ComplianceReport, language: str) -> str:
+    """Render the non-demonstrated findings as a distinct risks table.
+
+    The table surfaces the traceability column (tool + version + method) so
+    every risk shows which tool, at which version, produced it.
+    """
+    items = risk_items(report)
+    if not items:
+        body = f'<p class="empty">{_esc(_t(language, "no_risks"))}</p>'
+    else:
+        headers = (
+            f'<th scope="col">{_esc(_t(language, "risk"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "severity"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "risk_measures"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "tool_method"))}</th>'
+        )
+        rows: list[str] = []
+        for item in items:
+            label = checked_label_es({"kind": item["kind"], "checked": item["message"]})
+            severity = _SEVERITY_LABELS.get(item["severity"], item["severity"])
+            measures = ", ".join(item["measure_codes"]) or "—"
+            source = trace_source_label(item)
+            rows.append(
+                "<tr>"
+                f'<td class="risk-head">{_esc(label)}</td>'
+                f'<td>{_esc(severity)}</td>'
+                f"<td><code>{_esc(measures)}</code></td>"
+                f'<td class="risk-meta">{_esc(source)}</td>'
+                "</tr>"
+            )
+        body = (
+            '<div class="table-wrap"><table>'
+            f"<thead><tr>{headers}</tr></thead>"
+            f'<tbody>{"".join(rows)}</tbody></table></div>'
+        )
+    return (
+        '<section class="risks" aria-labelledby="h-riesgos">'
+        f'<h2 id="h-riesgos">{_esc(_t(language, "risks"))}</h2>'
+        f'<p class="lead">{_esc(_t(language, "risks_lead"))}</p>'
         f"{body}"
         "</section>"
     )
@@ -742,9 +931,11 @@ def render_html(
 {_render_header(report, lang)}
 <main>
 {_render_summary(report, lang)}
+{_render_dimensions_refuerzos(report, lang)}
 {_render_scanner_status(report, lang)}
 {_render_positive_evidence(report, lang)}
 {_render_nonconformities(report, catalog, lang)}
+{_render_risks(report, lang)}
 {_render_recommendations(report, lang)}
 <section class="measures" aria-labelledby="h-medidas">
 <h2 id="h-medidas">{_esc(_t(lang, "measures"))}</h2>
@@ -999,6 +1190,31 @@ summary:hover{text-decoration:underline;}
 .ev-loc{font-family:var(--mono);font-size:.82rem;background:var(--surface-2);padding:.05rem .3rem;border-radius:4px;}
 .ev-detail{color:var(--ink-soft);}
 .empty{color:var(--ink-soft);font-style:italic;}
+.ev-states-title{font-size:1rem;margin:1.6rem 0 .3rem;}
+.ev-states{
+  list-style:none;margin:0;padding:0;
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));
+  gap:.6rem;
+}
+.ev-state{
+  border:1px solid var(--line);border-left:5px solid var(--line-strong);
+  padding:.5rem .7rem;background:var(--surface);
+}
+.ev-state-value{display:block;font-family:var(--serif);font-size:1.4rem;line-height:1.1;}
+.ev-state-label{display:block;font-size:.8rem;color:var(--ink-soft);font-weight:600;}
+.ev-state-badge{
+  display:block;margin-top:.3rem;font-size:.74rem;color:var(--ink-soft);font-weight:600;
+}
+.trace,.trace-refs{margin:.15rem 0 .3rem;color:var(--ink-soft);font-size:.85rem;}
+.trace-label{font-weight:700;color:var(--ink);}
+.risks .risk-list{margin:0;padding-left:1.2rem;}
+.risk-item{margin-bottom:.8rem;}
+.risk-head{margin:0;font-weight:600;}
+.risk-meta{margin:.1rem 0 0;color:var(--ink-soft);font-size:.9rem;}
+.refuerzos-title{font-size:1rem;margin:1.4rem 0 .3rem;}
+.refuerzo-list{margin:0;padding-left:1.2rem;}
+.refuerzo-item{margin-bottom:.3rem;}
 .colophon{
   margin-top:3rem;
   padding-top:1rem;

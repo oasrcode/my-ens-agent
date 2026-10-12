@@ -18,6 +18,7 @@ from ens_audit.models import CheckEvidence, Finding, ScanReport
 from .base import Scanner, ScannerResult
 
 __all__ = [
+    "EXTERNAL_CATEGORY",
     "clear_registry",
     "get_scanner",
     "list_scanners",
@@ -27,6 +28,12 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+#: Scanner category of the optional external tools (see
+#: :mod:`ens_audit.checks.external`). Scanners in this category are opt-in: the
+#: default :func:`run_scans` never runs them, so a routine scan does not shell
+#: out to third-party tools. They are still selectable by explicit id.
+EXTERNAL_CATEGORY = "external"
 
 _REGISTRY: dict[str, Scanner] = {}
 
@@ -79,33 +86,69 @@ def list_scanners() -> list[Scanner]:
     return list(_REGISTRY.values())
 
 
-def _resolve(scanner_ids: list[str] | None) -> list[Scanner]:
-    """Resolve the scanners to run from optional explicit ids."""
+def _default_scanners(include_external: bool) -> list[Scanner]:
+    """Return the scanners a run selects by default.
+
+    The optional external tools are excluded unless ``include_external`` is set,
+    so a routine scan never shells out to third-party binaries.
+    """
+    scanners = list_scanners()
+    if include_external:
+        return scanners
+    return [scanner for scanner in scanners if scanner.category != EXTERNAL_CATEGORY]
+
+
+def _resolve(scanner_ids: list[str] | None, include_external: bool) -> list[Scanner]:
+    """Resolve the scanners to run from optional explicit ids.
+
+    An explicit ``scanner_ids`` list always wins (so an external scanner can be
+    selected by id); ``include_external`` only affects the default set used when
+    no ids are given.
+    """
     if scanner_ids is None:
-        return list_scanners()
+        return _default_scanners(include_external)
     return [get_scanner(scanner_id) for scanner_id in scanner_ids]
 
 
 def _normalize(finding: Finding, scanner_id: str) -> Finding:
-    """Return the finding stamped with its originating scanner id."""
-    if finding.scanner:
+    """Return the finding stamped with its originating scanner id and tool.
+
+    The tool axis is populated centrally here (not per scanner): a finding that
+    does not carry a ``tool`` is attributed to the scanner that produced it,
+    while ``method``/``confidence`` keep their model defaults.
+    """
+    updates: dict[str, str] = {}
+    if not finding.scanner:
+        updates["scanner"] = scanner_id
+    if not finding.tool:
+        updates["tool"] = scanner_id
+    if not updates:
         return finding
-    return finding.model_copy(update={"scanner": scanner_id})
+    return finding.model_copy(update=updates)
 
 
-def run_scans(target: Path, check_ids: list[str] | None = None) -> ScanReport:
+def run_scans(
+    target: Path,
+    check_ids: list[str] | None = None,
+    include_external: bool = False,
+) -> ScanReport:
     """Run the selected scanners against ``target`` and aggregate findings.
 
     :param target: directory (or file) to scan.
-    :param check_ids: explicit scanner ids to run, in order; all registered
-        scanners when ``None``.
+    :param check_ids: explicit scanner ids to run, in order; when ``None`` every
+        registered scanner is selected *except* the opt-in external scanners
+        unless ``include_external`` is set.
+    :param include_external: include the optional external scanners
+        (``external.*``) in the default selection. They are excluded by default
+        so a routine scan never shells out to third-party tools; an external
+        scanner requested explicitly through ``check_ids`` runs regardless.
     :returns: a :class:`ScanReport` with the aggregated findings, the ids of
         the scanners that ran, each scanner's status (``completed`` / ``failed``
         / ``skipped``), the aggregated positive evidence and a UTC timestamp.
     :raises KeyError: when a requested ``check_ids`` entry is not registered.
     """
     target = Path(target)
-    scanners = _resolve(check_ids)
+    scanners = _resolve(check_ids, include_external)
     findings: list[Finding] = []
     evidence: list[CheckEvidence] = []
     scanner_status: dict[str, str] = {}

@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  web:
+    image: nginx:latest
+    privileged: true
+    network_mode: host
+    environment:
+      DB_PASSWORD: supersecret
+    ports:
+      - "80:80"

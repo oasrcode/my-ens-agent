@@ -1,0 +1,4 @@
+# Intentionally insecure fixture: unpinned and deprecated dependencies.
+Flask
+requests
+pycrypto
