@@ -1,8 +1,8 @@
 # gitleaks configuration for the public `ens-audit` repository.
 #
 # This file EXTENDS gitleaks' built-in default ruleset (`useDefault = true`):
-# every default detection rule stays active. It only adds a single, narrow
-# allowlist; detection is NOT weakened anywhere else.
+# every default detection rule stays active. It adds one narrow global allowlist
+# plus a rule-scoped one for the custom rule; no default detection is weakened.
 #
 # The allowlist covers `tests/fixtures/`, which ships in the public repo as a
 # curated subset and holds INTENTIONALLY vulnerable / insecure sample files
@@ -24,6 +24,56 @@
 
 [extend]
 useDefault = true
+
+# ---------------------------------------------------------------------------
+# Custom rules (added on top of the default ruleset; nothing is weakened).
+# ---------------------------------------------------------------------------
+
+# Flags absolute user home-directory paths. Such paths embed the local machine
+# layout and the developer's username (e.g. /home/<user>/... or /Users/<user>/...),
+# which leaks private environment details and is non-portable in a public repo.
+# This is a hygiene/privacy rule, not a credential-leak rule.
+#
+# WHY THE CAPTURE GROUP (AND |secretGroup|) MATTERS:
+# gitleaks' built-in default ruleset (kept active by `useDefault = true`) ships a
+# GLOBAL allowlist regex `^/(?:bin|etc|home|opt|tmp|usr|var)/[\w ./-]+$` that
+# matches any pure-path secret. `[extend]` can only APPEND allowlists, never
+# remove the built-in one, so that entry cannot be dropped without abandoning the
+# defaults. It is evaluated against the extracted SECRET (not the whole match).
+# The regex therefore anchors the full match on the absolute path (leading `/`
+# and all), while its single CAPTURE GROUP captures the path WITHOUT the leading
+# slash: gitleaks reports a capture group as the finding's secret, so the built-in
+# pattern anchored at `^/...` no longer matches and the rule fires. `secretGroup =
+# 1` is set explicitly -- instead of relying on the default capture-group
+# selection -- to make that intent unambiguous and defensive across versions.
+# Detection of the absolute path is unchanged; only the reported secret omits the
+# leading `/`.
+#
+# RE2/Go-compatible on purpose: one plain capture group + alternation, NO
+# non-capturing groups (?:...), NO lookarounds and NO backreferences.
+[[rules]]
+id = "absolute-user-home-path"
+description = "Absolute user home path leaks the local machine layout / username (e.g. /home/<user> or /Users/<user>)"
+regex = '''/(home/[a-zA-Z0-9._-]+|Users/[a-zA-Z0-9._-]+)'''
+secretGroup = 1
+tags = ["privacy", "path"]
+
+# Rule-scoped allowlist -- it applies ONLY to `absolute-user-home-path`, so no
+# default rule can be affected (this is what keeps "nothing is weakened" literal).
+# The plural `[[rules.allowlists]]` form is supported by gitleaks >= 8.21.0, which
+# covers both the pinned 8.30.1 and the 8.24.3 used by the action.
+# The generic DOCUMENTATION placeholders below are not real machine paths. Because
+# the rule reports the secret WITHOUT its leading slash (see the capture-group note
+# above), the built-in path allowlist no longer covers these, so they are exempted
+# here. Only these exact placeholder usernames are exempted; the rule still fires
+# on real home paths such as /home/<user> or /Users/<user>.
+[[rules.allowlists]]
+description = "Generic documentation placeholders for the home-path rule (rule-scoped; no effect on other rules)"
+regexes = [
+  '''^home/user$''',
+  '''^home/username$''',
+  '''^Users/example$''',
+]
 
 [allowlist]
 description = "Intentionally vulnerable scanner fixtures (fictional secrets are the point)"
