@@ -4,6 +4,7 @@ from .base import Scanner, ScannerResult
 from .mapping import (
     MEASURE_MAP,
     MeasureRef,
+    covered_measures,
     known_kinds,
     measures_for,
     validate_mapping,
@@ -23,6 +24,7 @@ __all__ = [
     "Scanner",
     "ScannerResult",
     "clear_registry",
+    "covered_measures",
     "get_scanner",
     "known_kinds",
     "list_scanners",

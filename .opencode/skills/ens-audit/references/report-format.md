@@ -10,11 +10,11 @@ Five values, exactly one per catalog measure (73):
 
 | Verdict | Spanish label | Meaning |
 | --- | --- | --- |
-| `cumple` | Cumple | Measure satisfied (or compliant by default with no findings). |
+| `cumple` | Cumple | **Every** applicable requirement verified with sufficient evidence: an explicit assessment, or a scanner check with `covers_all=true`. Never reached by default. |
 | `no_cumple` | No cumple | A failing signal / explicit non-compliance. Major non-conformity. |
-| `parcial` | Parcial | Mixed failing and passing signals. Minor non-conformity. |
-| `no_aplica` | No aplica | Measure not applicable to the system category. Excluded from the compliance %. |
-| `no_evaluable` | No evaluable | Documentary/organizational/physical measure with no evidence and no assessment. |
+| `parcial` | Parcial | Mixed failing and passing signals, or a scanner-covered measure that ran clean without covering the whole measure. Minor non-conformity. |
+| `no_aplica` | No aplica | Measure not applicable to the system category. Excluded from both denominators. |
+| `no_evaluable` | No evaluable | No coverage, or coverage whose scanner failed, and no assessment. |
 
 ### Precedence (first match wins)
 
@@ -23,18 +23,29 @@ Five values, exactly one per catalog measure (73):
    including applicability.
 2. **Applicability** — when `categoria` is passed to `evaluate_compliance`,
    measures not applicable to that category are `no_aplica`.
-3. **Scanner findings** — findings consumed via their `measure_codes`:
-   failing-only → `no_cumple`; positive-only → `cumple`; mixed → `parcial`.
-   A finding is a *failure signal* unless its severity is `info`.
-4. **No automated evidence** — a measure matching a non-automatable family
-   (below) with no findings and no assessment → `no_evaluable`.
-5. **Default** — any other measure with no findings → `cumple`.
+3. **Scanner signals** — consumed via their `measure_codes`. A *positive signal*
+   is a `CheckEvidence` with `result == "pass"` or an `info`-severity finding; a
+   *failure signal* is any other finding:
+   - failing-only → `no_cumple`;
+   - failing + positive → `parcial`;
+   - positive-only → `parcial`, **unless** some `CheckEvidence` has
+     `covers_all=true`, which raises the measure to `cumple`.
+4. **No signal at all** → `no_evaluable`, whether or not a scanner claimed
+   coverage. No coverage, or coverage whose scanner failed, is `no_evaluable`.
 
-### Compliance percentage
+`cumple` is never reached by default: *absence of findings is not evidence of
+compliance*. A clean scanner check that does not cover the whole measure yields
+`parcial`, not `cumple`.
 
-`compliance_pct = round(100 * cumple / applicable, 2)`, where
-`applicable = total - no_aplica`. `no_aplica` measures are excluded from the
-denominator; `no_evaluable` measures stay in it (they are not compliance).
+### Percentages
+
+- `compliance_pct = round(100 * cumple / applicable, 2)`.
+- `coverage_pct = round(100 * (applicable − no_evaluable) / applicable, 2)`.
+
+`applicable = total − no_aplica`. `no_aplica` is excluded from both denominators;
+`no_evaluable` stays in both (it is neither compliance nor coverage). A high
+`coverage_pct` with a low `compliance_pct` means the system was checked and found
+failing, not that it complies.
 
 ## Output formats
 
@@ -55,31 +66,48 @@ Generated in Spanish (the audit's working language); identifiers stay English.
 
 1. Title and provenance line.
 2. **Metadatos** — system, category, date, norm, catalog version.
-3. **Resumen ejecutivo** — verdict counts table and the compliance percentage.
-4. **Alcance y metodología** — scope, precedence order, scanners run, findings,
-   applicable count.
+3. **Resumen ejecutivo** — verdict counts table and **both** the compliance
+   percentage and the coverage percentage.
+4. **Alcance y metodología** — scope, precedence order, scanners run and their
+   status, findings, positive evidence, applicable count.
 5. **Categorización** — derived category and its Anexo I basis.
 6. **Tabla completa de medidas** — one row per catalog measure: code, name,
    framework/family, verdict.
 7. **No conformidades** — every `no_cumple` and `parcial` with rationale and
    evidence.
-8. **Recomendaciones** — data-driven: remediate major non-conformities, review
+8. **Evidencia positiva y estado de escáneres** — what each scanner checked
+   (what/result/scope/date) and each scanner's status
+   (`completed`/`failed`/`skipped`).
+9. **Recomendaciones** — data-driven: remediate major non-conformities, review
    partial ones, supply evidence for `no_evaluable` ones.
 
 ## JSON structure
 
-Versioned document (`schema_version: "1.0"`), deterministic ordering (catalog
+Versioned document (`schema_version: "1.1"`), deterministic ordering (catalog
 order when a catalog is available):
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "generated_at": "<ISO-8601 UTC>",
   "category": "MEDIA",
   "summary": {
     "total": 73, "cumple": 0, "no_cumple": 0, "parcial": 0,
-    "no_aplica": 0, "no_evaluable": 0, "applicable": 0, "compliance_pct": 0.0
+    "no_aplica": 0, "no_evaluable": 0, "applicable": 0,
+    "compliance_pct": 0.0, "coverage_pct": 0.0
   },
+  "evidence": [
+    {
+      "scanner": "code.crypto",
+      "measure_codes": ["mp.com.2"],
+      "checked": "TLS configuration of the web endpoints",
+      "scope": "src/",
+      "result": "pass",
+      "observed_at": "<ISO-8601 UTC>",
+      "covers_all": false
+    }
+  ],
+  "scanner_status": {"code.crypto": "completed", "infra.dockerfile": "skipped"},
   "verdicts": [
     {
       "code": "mp.com.2",
@@ -92,12 +120,12 @@ order when a catalog is available):
 }
 ```
 
-Each `evidence.kind` is one of `file_line`, `config` or `note`.
+Each `verdicts[].evidence[].kind` is one of `file_line`, `config` or `note`.
 
 ## Non-automatable families (auto `no_evaluable`)
 
-A conservative, closed allow-list in `evaluate.py`; a measure here with no
-findings and no assessment is reported `no_evaluable`:
+A conservative, closed allow-list in `evaluate.py` used to enrich the rationale of
+`no_evaluable` verdicts:
 
 - `org.*` — organizational marco (policy, norms, procedures, roles).
 - `op.pl.1` — risk analysis.
@@ -108,6 +136,7 @@ findings and no assessment is reported `no_evaluable`:
 - `mp.info.2` — information classification.
 - `mp.si.1` — media marking.
 
-Extending the list only ever moves a no-evidence measure from `cumple` to
-`no_evaluable`. Measures in these families with findings or an explicit
-assessment still evaluate normally (precedence rules 1 and 3).
+Any measure with no evidence and no assessment is `no_evaluable` regardless of
+family (there is no default `cumple`); this list only enriches the rationale.
+Measures in these families with findings or an explicit assessment still evaluate
+normally (precedence rules 1 and 3).

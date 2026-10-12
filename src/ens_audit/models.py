@@ -72,6 +72,25 @@ class Finding(BaseModel):
         return self.id
 
 
+class CheckEvidence(BaseModel):
+    """Positive evidence that a scanner examined a measure and found it clean.
+
+    Absence of findings is not evidence of compliance, so a scanner must record
+    explicitly what it checked. ``covers_all`` states whether the check covers
+    *every* applicable requirement of the measure: only then can a clean result
+    raise the measure to ``cumple`` (otherwise the verdict is ``parcial``).
+    """
+
+    scanner: str
+    measure_codes: list[str]
+    checked: str
+    scope: str
+    result: str = "pass"
+    observed_at: datetime = Field(default_factory=_utcnow)
+    covers_all: bool = False
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
 class ScanReport(BaseModel):
     """Result of running one or more scanners against a target."""
 
@@ -79,6 +98,8 @@ class ScanReport(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     scanners: list[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=_utcnow)
+    evidence: list[CheckEvidence] = Field(default_factory=list)
+    scanner_status: dict[str, str] = Field(default_factory=dict)
 
 
 class Assessment(BaseModel):
@@ -100,7 +121,15 @@ class MeasureVerdict(BaseModel):
 
 
 class ComplianceSummary(BaseModel):
-    """Aggregate counts of verdicts across the assessed measures."""
+    """Aggregate counts of verdicts across the assessed measures.
+
+    Two distinct ratios are exposed (see the R1 verdict-reliability revision):
+
+    * ``compliance_pct`` = ``cumple / applicable`` -- how much of what applies
+      is explicitly verified as compliant.
+    * ``coverage_pct`` = ``(applicable - no_evaluable) / applicable`` -- how
+      much of what applies has *any* evidence (i.e. is not ``no_evaluable``).
+    """
 
     total: int = 0
     cumple: int = 0
@@ -108,6 +137,9 @@ class ComplianceSummary(BaseModel):
     parcial: int = 0
     no_aplica: int = 0
     no_evaluable: int = 0
+    applicable: int = 0
+    compliance_pct: float = 0.0
+    coverage_pct: float = 0.0
 
     @classmethod
     def from_verdicts(cls, verdicts: list[MeasureVerdict]) -> ComplianceSummary:
@@ -118,6 +150,15 @@ class ComplianceSummary(BaseModel):
                 summary,
                 measure_verdict.verdict.value,
                 getattr(summary, measure_verdict.verdict.value) + 1,
+            )
+        summary.applicable = summary.total - summary.no_aplica
+        if summary.applicable:
+            summary.compliance_pct = round(
+                100 * summary.cumple / summary.applicable, 2
+            )
+            summary.coverage_pct = round(
+                100 * (summary.applicable - summary.no_evaluable) / summary.applicable,
+                2,
             )
         return summary
 

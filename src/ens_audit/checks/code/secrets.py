@@ -15,7 +15,7 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, iter_source_files, read_text
 
 __all__ = ["SecretsScanner"]
@@ -70,15 +70,28 @@ class SecretsScanner(Scanner):
     id = "code.secrets"
     description = "Detect hardcoded credentials, tokens and private keys in source."
     category = "code"
+    covers = ("secret.hardcoded",)
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
+            examined += 1
             findings.extend(self._scan_file(path, text))
-        return findings
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=self.covers,
+            examined=examined,
+            checked=(
+                "Scanned source files for hardcoded credentials, tokens and "
+                "private keys."
+            ),
+        )
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

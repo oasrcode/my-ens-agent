@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from ens_audit.models import Finding, ScanReport
+from ens_audit.models import CheckEvidence, Finding, ScanReport
 
 from .base import Scanner, ScannerResult
 
@@ -100,29 +100,40 @@ def run_scans(target: Path, check_ids: list[str] | None = None) -> ScanReport:
     :param check_ids: explicit scanner ids to run, in order; all registered
         scanners when ``None``.
     :returns: a :class:`ScanReport` with the aggregated findings, the ids of
-        the scanners that ran, and a UTC timestamp.
+        the scanners that ran, each scanner's status (``completed`` / ``failed``
+        / ``skipped``), the aggregated positive evidence and a UTC timestamp.
     :raises KeyError: when a requested ``check_ids`` entry is not registered.
     """
     target = Path(target)
     scanners = _resolve(check_ids)
     findings: list[Finding] = []
+    evidence: list[CheckEvidence] = []
+    scanner_status: dict[str, str] = {}
 
     for scanner in scanners:
         try:
             result = scanner.run(target)
         except Exception:  # one faulty scanner must not sink the whole scan
             logger.exception("scanner %s failed on %s", scanner.id, target)
+            # A failed scanner contributes no coverage: no evidence is
+            # aggregated, so its measures stay unevaluated.
+            scanner_status[scanner.id] = "failed"
             continue
         if isinstance(result, ScannerResult):
             for error in result.errors:
                 logger.warning("scanner %s: %s", scanner.id, error)
             scanner_findings: list[Finding] = result.findings
+            scanner_status[scanner.id] = result.status or "completed"
+            evidence.extend(result.evidence)
         else:
             scanner_findings = result
+            scanner_status[scanner.id] = "completed"
         findings.extend(_normalize(f, scanner.id) for f in scanner_findings)
 
     return ScanReport(
         target=str(target),
         findings=findings,
         scanners=[scanner.id for scanner in scanners],
+        evidence=evidence,
+        scanner_status=scanner_status,
     )

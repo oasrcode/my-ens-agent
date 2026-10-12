@@ -21,8 +21,9 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, iter_source_files, read_text
+from .sast import is_source_code
 
 __all__ = ["CryptoScanner"]
 
@@ -76,6 +77,15 @@ _HARDCODED_KEY = re.compile(
     r"cipher[_-]?key|private[_-]?key)(?![A-Za-z0-9])\s*[:=]\s*b?[\"'][^\"'\n]{6,}[\"']"
 )
 
+#: TLS/crypto configuration directives that make a non-source file a
+#: crypto-relevant artifact the scanner actually assessed. A dependency manifest
+#: that merely *names* a crypto library (e.g. ``cryptography``) does not qualify.
+_CRYPTO_CONFIG = re.compile(
+    r"(?i)(?:ssl_protocols|ssl_ciphers|sslprotocol|sslciphersuite|sslengine|"
+    r"curlopt_ssl_verifypeer|node_tls_reject_unauthorized|insecureskipverify|"
+    r"rejectunauthorized|verify\s*[:=]\s*(?:true|false|0|1))"
+)
+
 
 @register
 class CryptoScanner(Scanner):
@@ -84,15 +94,37 @@ class CryptoScanner(Scanner):
     id = "code.crypto"
     description = "Detect weak crypto, disabled TLS verification and hardcoded keys."
     category = "code"
+    covers = ("crypto.weak_algorithm", "transport.tls_missing")
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
+        evaluated: list[str] = []
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
+            examined += 1
             findings.extend(self._scan_file(path, text))
-        return findings
+            # Certify crypto measures only when a crypto-relevant artifact was
+            # actually examined: source code, or a config carrying TLS/crypto
+            # directives. A manifest that merely lists a crypto dependency does
+            # not qualify.
+            if is_source_code(path) or _CRYPTO_CONFIG.search(text):
+                for kind in self.covers:
+                    if kind not in evaluated:
+                        evaluated.append(kind)
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=evaluated,
+            examined=examined,
+            checked=(
+                "Scanned source for weak crypto, disabled TLS verification and "
+                "hardcoded key material."
+            ),
+        )
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

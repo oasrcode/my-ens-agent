@@ -24,7 +24,7 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, iter_source_files, read_text
 
 __all__ = ["LoggingScanner"]
@@ -70,15 +70,39 @@ class LoggingScanner(Scanner):
     id = "code.logging"
     description = "Check audit logging presence, secret leakage and swallowed errors."
     category = "code"
+    covers = ("logging.audit_disabled", "secret.hardcoded")
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
+        has_logging_call = False
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
+            examined += 1
+            if _LOGGING_CALL.search(text):
+                has_logging_call = True
             findings.extend(self._scan_file(path, text))
-        return findings
+        # ``secret.hardcoded`` here means "secret written to a log": without any
+        # logging call to inspect, that check was never applied, so it must not
+        # certify the secret measures. ``logging.audit_disabled`` (missing
+        # logging in security modules, swallowed exceptions) is applied to
+        # every scanned source file.
+        evaluated = ["logging.audit_disabled"]
+        if has_logging_call:
+            evaluated.append("secret.hardcoded")
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=evaluated,
+            examined=examined,
+            checked=(
+                "Checked source for audit-logging coverage, secret leakage in "
+                "logs and swallowed exceptions."
+            ),
+        )
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

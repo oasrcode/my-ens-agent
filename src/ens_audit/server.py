@@ -350,6 +350,12 @@ def run_scans(
 
     The resulting :class:`ScanReport` becomes the most recent scan, so a later
     ``evaluate_compliance`` call with no arguments uses it automatically.
+
+    R1 semantics: the report exposes the positive ``evidence`` a scanner collected
+    for what it actually examined and found clean, plus each scanner's execution
+    ``scanner_status`` (``completed``/``failed``/``skipped``). Absence of findings
+    is *not* evidence of compliance, and a failed or skipped scanner grants no
+    coverage to the measures it would have checked.
     """
     state = _state(ctx)
     try:
@@ -377,7 +383,9 @@ def record_assessment(
     """Record a manual assessment for a measure, overriding scan verdicts.
 
     The assessment is stored in the session and reused by ``evaluate_compliance``
-    when no explicit ``assessments`` argument is given.
+    when no explicit ``assessments`` argument is given. Under the R1 semantics an
+    explicit assessment is the only way to reach ``cumple`` for a measure that no
+    scanner check covers in full; scanners never default a measure to ``cumple``.
     """
     state = _state(ctx)
     _require_measure(state.catalog, measure_code)
@@ -418,9 +426,19 @@ def evaluate_compliance(
 ) -> ComplianceReport:
     """Consolidate scans and assessments into a per-measure compliance report.
 
-    Exactly one verdict is produced per catalog measure (73). When arguments are
-    omitted the most recent scan and the recorded assessments are used, and the
-    report is stored as the last evaluated report for ``render_report``.
+    Exactly one verdict is produced per catalog measure (73). Under the R1
+    semantics absence of findings is not evidence of compliance: ``cumple`` is
+    never reached by default and requires explicit positive verification (an
+    assessment, or a scanner check with ``covers_all=True``). A measure a scanner
+    covered and found clean is ``parcial``; no coverage, or coverage whose scanner
+    failed, leaves it ``no_evaluable``.
+
+    The ``summary`` exposes both the compliance percentage (``compliance_pct``)
+    and the evaluation-coverage percentage (``coverage_pct``), and the report
+    ``metadata`` carries the positive ``evidence`` and the ``scanner_status``.
+    When arguments are omitted the most recent scan and the recorded assessments
+    are used, and the report is stored as the last evaluated report for
+    ``render_report``.
     """
     state = _state(ctx)
     effective_scan = scan_report if scan_report is not None else state.last_scan
@@ -448,7 +466,12 @@ def render_report(
         str | None, "Destination directory; defaults to the working directory."
     ] = None,
 ) -> list[str]:
-    """Render a compliance report to files and return their absolute paths."""
+    """Render a compliance report to files and return their absolute paths.
+
+    The rendered artefacts (Markdown, JSON and HTML) separate the compliance
+    percentage from the evaluation-coverage percentage and include the positive
+    evidence (what was checked, result, scope and date) and each scanner's status.
+    """
     state = _state(ctx)
     effective_report = report if report is not None else state.last_report
     if effective_report is None:
@@ -529,7 +552,8 @@ def audit_methodology(target: str = "the target system") -> list[Message]:
             "(3) record the qualitative verdicts with record_assessment for "
             "measures a scanner cannot evidence; "
             "(4) call evaluate_compliance with the derived category to get the "
-            "73-verdict report; "
+            "73-verdict report, which separates the compliance and coverage "
+            "percentages and carries the positive evidence and scanner status; "
             "(5) render_report to emit the Markdown, JSON and HTML artefacts. "
             "For each measure cite the CCN-STIC guide that backs the evidence "
             "(ens://guides/CCN-STIC-808 is the measure-by-measure checklist)."
@@ -549,7 +573,8 @@ def report_outline(categoria: str = "MEDIA") -> list[Message]:
             "audit process, CCN-STIC-808 checklist); (4) per-measure verdicts "
             "grouped by marco (org/op/mp), each with its rationale and CCN-STIC "
             "guide; (5) non-conformities and compensating measures "
-            "(CCN-STIC-819); (6) conclusions and the compliance percentage. "
+            "(CCN-STIC-819); (6) conclusions and the compliance and coverage "
+            "percentages. "
             "Base every claim on the evaluate_compliance report."
         )
     ]
@@ -579,21 +604,27 @@ ENS audit methodology (RD 311/2022, Anexo II)
 4. Evidence collection
    Run the deterministic scanners with run_scans over the source code and the
    infrastructure configuration. Scanner findings map to measures via the
-   built-in rule-to-measure table (see checks/mapping.py). Measures that a
+   built-in rule-to-measure table (see checks/mapping.py); each scanner also
+   emits positive CheckEvidence for what it actually examined and found clean,
+   and records its execution status (completed/failed/skipped). Measures that a
    scanner cannot evidence (documents, management processes, physical controls)
    require a manual record_assessment.
 
 5. Evaluation
    Call evaluate_compliance to consolidate the scan and the assessments into
-   exactly one verdict per catalog measure (73). Verdict precedence: explicit
-   assessment, then applicability (NO_APLICA), then scanner findings
-   (NO_CUMPLE/PARCIAL/CUMPLE), then NO_EVALUABLE for non-automatable measures
-   with no evidence, then CUMPLE by default.
+   exactly one verdict per catalog measure (73). Absence of findings is not
+   evidence of compliance: CUMPLE is never reached by default. Verdict
+   precedence: explicit assessment, then applicability (NO_APLICA), then scanner
+   signals -- failing-only NO_CUMPLE, mixed PARCIAL, positive-only PARCIAL
+   (CUMPLE only when a check covers every applicable requirement) -- and finally
+   NO_EVALUABLE when there is no coverage, or when the covering scanner failed.
 
 6. Reporting
-   Call render_report to emit Markdown, JSON and HTML artifacts. Cite the
-   relevant CCN-STIC guide for each measure; CCN-STIC-808 provides the
-   measure-by-measure verification checklist.
+   Call render_report to emit Markdown, JSON and HTML artifacts. The summary
+   separates the compliance percentage from the evaluation-coverage percentage,
+   lists the positive evidence (what was checked, result, scope and date) and
+   shows each scanner's status. Cite the relevant CCN-STIC guide for each
+   measure; CCN-STIC-808 provides the measure-by-measure verification checklist.
 """
 
 

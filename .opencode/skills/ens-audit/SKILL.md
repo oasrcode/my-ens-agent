@@ -44,23 +44,31 @@ scanner cannot cover, or generating the Markdown/JSON/HTML compliance report.
    `code.sast`, `code.dependencies`, `code.logging`, `infra.web`,
    `infra.dockerfile`, `infra.backup`, `infra.terraform`, `infra.compose`. The
    returned `ScanReport` is stored as the session's last scan. Findings carry the
-   ENS `measure_codes` they concern and their evidence; see
+   ENS `measure_codes` they concern and their evidence; the report also carries
+   the positive `evidence` a scanner collected for what it actually examined and
+   found clean (what/result/scope/date) and `scanner_status`
+   (`completed`/`failed`/`skipped`). See
    [`references/mapping.md`](references/mapping.md) for the kind → measure table.
 
 5. **Assess what scanners cannot evidence.** For documentary, organizational or
    physical measures (see *Non-automatable measures* below) call
    `record_assessment(measure_code, verdict, notes, evidence)` with the appropriate
    verdict and a rationale. Repeat once per measure. This is where human/agent
-   judgement enters the report; explicit assessments override scan verdicts.
+   judgement enters the report; explicit assessments override scan verdicts and
+   are the only way to reach `cumple` for a measure no scanner covers in full.
 
 6. **Evaluate.** Call `evaluate_compliance` (no arguments reuses the last scan and
    every assessment recorded this session; pass `categoria` to enable `NO_APLICA`).
-   It returns exactly one verdict per catalog measure (73) plus the aggregate summary
-   and compliance percentage, and stores the report for rendering.
+   It returns exactly one verdict per catalog measure (73) plus the aggregate
+   summary with **both** the compliance percentage (`compliance_pct`) and the
+   evaluation-coverage percentage (`coverage_pct`), and stores the report for
+   rendering.
 
 7. **Render.** Call `render_report(formats=["md","json","html"], output_dir=...)` to
    write `informe-ens.{md,json,html}`; it defaults to the last evaluated report, all
-   three formats, and the working directory. Report structure and verdict semantics:
+   three formats, and the working directory. The report separates **% cumplimiento**
+   from **% cobertura** and includes the positive evidence and the scanner status.
+   Report structure and verdict semantics:
    [`references/report-format.md`](references/report-format.md).
 
 ## MCP tools (7)
@@ -70,9 +78,9 @@ scanner cannot cover, or generating the Markdown/JSON/HTML compliance report.
 | `catalog_list_measures` | `(marco?, familia?, categoria?)` | Discover/filter measures (read-only). |
 | `catalog_get_measure` | `(code)` | Full detail for one measure. |
 | `catalog_compute_applicability` | `(dimensiones)` | Derive category + applicable measures/refuerzos. |
-| `run_scans` | `(target, checks?)` | Run scanners over a path; stores last scan. |
+| `run_scans` | `(target, checks?)` | Run scanners over a path; stores last scan (findings + positive evidence + status). |
 | `record_assessment` | `(measure_code, verdict, notes?, evidence?)` | Record a manual verdict for a measure. |
-| `evaluate_compliance` | `(scan_report?, assessments?, categoria?)` | Consolidate into the 73-measure report. |
+| `evaluate_compliance` | `(scan_report?, assessments?, categoria?)` | Consolidate into the 73-measure report (compliance + coverage %). |
 | `render_report` | `(report?, formats?, output_dir?)` | Write md/json/html and return absolute paths. |
 
 `dimensiones` keys accept the dimension name or its letter (`C`/`I`/`D`/`A`/`T`),
@@ -103,12 +111,44 @@ Every measure ends with exactly one verdict: `cumple`, `no_cumple`, `parcial`,
 
 1. **Explicit assessment** — an `Assessment` (from `record_assessment`) wins over everything.
 2. **Applicability** — when `categoria` is given, measures not applicable to it are `no_aplica`.
-3. **Scanner findings** — findings aggregated by `measure_codes`: any failing signal only → `no_cumple`; only positive signals → `cumple`; both → `parcial`. A finding is a *failure signal* unless its severity is `info` (INFO is a passing/positive signal).
-4. **No automated evidence** — a non-automatable measure with no findings and no assessment → `no_evaluable`.
-5. **Default** — any other measure with no findings → `cumple`.
+3. **Scanner signals**, aggregated by `measure_codes`. A *positive signal* is a
+   `CheckEvidence` with `result == "pass"`, or an `info`-severity finding; a
+   *failure signal* is any other finding:
+   - failing signal(s) only → `no_cumple`;
+   - failing + positive signals → `parcial`;
+   - positive signals only → `parcial`, **unless** some `CheckEvidence` has
+     `covers_all=true` (it verifies *every* applicable requirement), which raises
+     the measure to `cumple`.
+4. **No signal at all** → `no_evaluable`, whether or not a scanner claimed
+   coverage. No coverage, or coverage whose scanner **failed**, leaves the measure
+   `no_evaluable`.
 
-Absence of evidence is not compliance: measures a scanner cannot see become
-`no_evaluable`, not `cumple`.
+`cumple` is **never reached by default**: *absence of findings ≠ evidence of
+compliance*. It requires explicit positive verification — a manual assessment, or a
+scanner check that covers the whole measure. A scanner that ran clean over one
+requirement yields `parcial`, not `cumple`.
+
+## Metrics
+
+The report summary exposes two distinct ratios; do not conflate them:
+
+- **% cumplimiento** (`compliance_pct`) = `cumple / applicable`.
+- **% cobertura** (`coverage_pct`) = `(applicable − no_evaluable) / applicable` —
+  how much of what applies has *some* evidence.
+
+`applicable = total − no_aplica`. A high `coverage_pct` with a low
+`compliance_pct` means the system was checked and found failing, not that it
+complies.
+
+## Positive evidence and scanner status
+
+`run_scans` records, per scanner, `scanner_status`
+(`completed`/`failed`/`skipped`) and a list of `CheckEvidence` for what each
+scanner actually examined and found clean: `scanner`, `measure_codes`, `checked`
+(what was verified), `scope`, `result` (`pass`), `observed_at` (date) and
+`covers_all`. The report includes this evidence (what/result/scope/date) and the
+scanner status. A `failed` or `skipped` scanner grants no coverage, so the
+measures it would have checked stay `no_evaluable`.
 
 ## Non-automatable measures (auto `no_evaluable`)
 
@@ -124,4 +164,6 @@ These families have no machine-checkable evidence and must be covered by
 - `mp.info.2` — information classification (organizational decision).
 - `mp.si.1` — media marking (physical/organizational control).
 
-They still evaluate normally if they have findings or an explicit assessment.
+Any measure with no evidence and no assessment is `no_evaluable` regardless of
+family; this list only enriches the rationale. These families still evaluate
+normally if they have findings or an explicit assessment.

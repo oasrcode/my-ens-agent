@@ -7,6 +7,10 @@ judgements) into a :class:`~ens_audit.models.ComplianceReport` with **exactly
 one** :class:`~ens_audit.models.MeasureVerdict` per ENS measure in the catalog
 (the RD 311/2022 Anexo II catalog has 73 base measures).
 
+The fundamental rule is: **absence of findings is not evidence of compliance.**
+``CUMPLE`` is never reachable by default -- it requires explicit positive
+verification.
+
 Verdict precedence (first matching rule wins)
 ---------------------------------------------
 1. **Explicit assessment.** If an :class:`Assessment` exists for the measure its
@@ -20,28 +24,41 @@ Verdict precedence (first matching rule wins)
    from the category -- ``BASICA`` -> all dimensions ``BAJO``, ``MEDIA`` ->
    ``MEDIO``, ``ALTA`` -> ``ALTO``. This yields the documented upper-bound counts
    (52 / 68 / 73 applicable measures).
-3. **Scanner findings.** Findings are aggregated by consuming their
-   ``measure_codes`` directly (this module never imports the checks layer). A
-   finding is a *failure signal* unless its severity is ``INFO``; ``INFO``
-   findings are treated as positive/informational signals (a check that ran and
-   observed no problem):
-     * failure signals only -> ``NO_CUMPLE``;
-     * positive signals only -> ``CUMPLE``;
-     * a mix of both -> ``PARCIAL``.
-4. **No automated evidence.** A measure with no findings and no assessment that
-   is documentary, purely organizational, or physical cannot be verified by a
-   deterministic scanner. Absence of evidence is not evidence of compliance, so
-   these measures are reported as ``NO_EVALUABLE``.
-5. **Compliant by default.** Any other measure with no findings is ``CUMPLE``.
+3. **Failure signals.** A finding is a *failure signal* unless its severity is
+   ``INFO``. Any failure finding makes the measure ``NO_CUMPLE``: **failures
+   dominate**, and a failure from one scanner is never downgraded to ``PARCIAL``
+   by positive evidence from another. Positive signals for a failed measure are
+   excluded globally before the verdict is resolved, so a confirmed failure
+   always wins (a scanner cannot certify as clean a measure another check
+   flagged).
+4. **Positive signals only.** A positive signal is any :class:`CheckEvidence`
+   whose ``result`` is ``pass`` (the evidence-based replacement for "a scanner
+   ran and found it clean") plus any ``INFO`` finding (legacy). -> ``CUMPLE``
+   **only if** some positive :class:`CheckEvidence` has ``covers_all=True`` (it
+   verifies *every* applicable requirement of the measure). Otherwise ->
+   ``PARCIAL``: a clean scanner check is not proof that the whole measure is
+   satisfied.
+5. **No failure and no positive signal.** -> ``NO_EVALUABLE``, whether or not
+   some scanner claimed coverage. Absence of evidence is never compliance.
+
+Positive signals are ``CheckEvidence`` entries grouped by their
+``measure_codes`` with ``result == "pass"`` (from ``scan_report.evidence``) plus
+any ``severity == INFO`` findings. Every measure code that produced a failure
+finding (in any scanner) is subtracted globally from the positive signals, so a
+failure is never masked by another scanner's clean check. *Coverage* is exactly
+the presence of a surviving positive signal: a measure a scanner ran over and
+found clean has ``CheckEvidence`` -> ``PARCIAL``, while a measure no scanner
+examined (or whose scanner failed and emitted nothing) has none ->
+``NO_EVALUABLE``.
 
 The no-automated-evidence heuristic
 -----------------------------------
 A scanner cannot produce machine-checkable evidence for measures whose
 requirements are met by documents, management processes or physical controls.
 The set below is deliberately **explicit and conservative** (each pattern is
-prefixed with a comment explaining why it is non-automatable). It is a closed
-allow-list: extending it only ever moves a no-evidence measure from ``CUMPLE``
-to ``NO_EVALUABLE``.
+prefixed with a comment explaining why it is non-automatable). It no longer
+changes the verdict -- a measure with no evidence is always ``NO_EVALUABLE`` --
+it only enriches the ``NO_EVALUABLE`` rationale.
 
 * ``org.*``    -- organizational marco: security policy, norms, procedures and
   the authorization process are documents.
@@ -69,6 +86,7 @@ from .catalog.applicability import compute_applicability
 from .catalog.models import Catalog, Categoria, Dimension, Nivel
 from .models import (
     Assessment,
+    CheckEvidence,
     ComplianceReport,
     ComplianceSummary,
     Evidence,
@@ -81,8 +99,9 @@ from .models import (
 
 __all__ = ["evaluate_compliance"]
 
-#: Measure-code patterns that no deterministic scanner can evaluate (see the
-#: module docstring for the rationale of each pattern).
+#: Measure-code patterns that no deterministic scanner can evaluate. Used only
+#: to enrich the ``NO_EVALUABLE`` rationale; the verdict is ``NO_EVALUABLE``
+#: regardless (see the module docstring).
 _NO_AUTOMATED_EVIDENCE_PATTERNS: tuple[str, ...] = (
     r"^org\.",  # organizational marco: documents and management processes
     r"^op\.pl\.1$",  # risk analysis (documented management activity)
@@ -167,11 +186,60 @@ def _is_failure(finding: Finding) -> bool:
     return finding.severity is not Severity.INFO
 
 
+def _failed_codes(scan_report: ScanReport | None) -> set[str]:
+    """Return every measure code that produced a failure finding.
+
+    The set spans *all* scanners: a failure recorded by one scanner must veto
+    the positive evidence another scanner emitted for the same measure, so the
+    subtraction is global rather than per scanner.
+    """
+    if scan_report is None:
+        return set()
+    return {
+        code
+        for finding in scan_report.findings
+        if _is_failure(finding)
+        for code in finding.measure_codes
+    }
+
+
+def _group_check_evidence(
+    scan_report: ScanReport | None,
+    failed_codes: set[str],
+) -> dict[str, list[CheckEvidence]]:
+    """Group positive check evidence by every measure code it references.
+
+    Only ``result == "pass"`` entries are positive signals; any other result is
+    ignored (it neither supports compliance nor signals a failure). Measure
+    codes in ``failed_codes`` are excluded so a failure confirmed by a scanner
+    is never certified clean by another one (failure dominance).
+    """
+    grouped: dict[str, list[CheckEvidence]] = {}
+    if scan_report is None:
+        return grouped
+    for check in scan_report.evidence:
+        if check.result != "pass":
+            continue
+        for code in check.measure_codes:
+            if code in failed_codes:
+                continue
+            grouped.setdefault(code, []).append(check)
+    return grouped
+
+
 def _collect_evidence(findings: Sequence[Finding]) -> list[Evidence]:
     """Flatten the evidence of the given findings, preserving order."""
     evidence: list[Evidence] = []
     for finding in findings:
         evidence.extend(finding.evidence)
+    return evidence
+
+
+def _collect_check_evidence(checks: Sequence[CheckEvidence]) -> list[Evidence]:
+    """Flatten the evidence attached to the given positive checks."""
+    evidence: list[Evidence] = []
+    for check in checks:
+        evidence.extend(check.evidence)
     return evidence
 
 
@@ -182,6 +250,7 @@ def _verdict_for_measure(
     category_label: str,
     assessment: Assessment | None,
     findings: list[Finding],
+    check_evidence: list[CheckEvidence],
 ) -> MeasureVerdict:
     """Resolve the verdict of a single measure following the precedence rules."""
     if assessment is not None:
@@ -200,46 +269,56 @@ def _verdict_for_measure(
         )
 
     failures = [finding for finding in findings if _is_failure(finding)]
-    positives = [finding for finding in findings if not _is_failure(finding)]
-
-    if failures and positives:
-        return MeasureVerdict(
-            measure_code=code,
-            verdict=Verdict.PARCIAL,
-            evidence=_collect_evidence(findings),
-            rationale=(
-                f"{len(failures)} failing and {len(positives)} passing scanner "
-                "signal(s) for this measure."
-            ),
-        )
     if failures:
+        # Failure dominance: a confirmed failure always wins. Positive signals
+        # for this measure were already excluded globally (``failed_codes``), so
+        # no clean check from another scanner can downgrade it to ``PARCIAL``.
         return MeasureVerdict(
             measure_code=code,
             verdict=Verdict.NO_CUMPLE,
             evidence=_collect_evidence(failures),
             rationale=f"{len(failures)} failing scanner finding(s) for this measure.",
         )
-    if positives:
+
+    info_findings = [finding for finding in findings if not _is_failure(finding)]
+    positive_count = len(info_findings) + len(check_evidence)
+    has_positive = positive_count > 0
+
+    if has_positive:
+        positive_evidence = _collect_check_evidence(
+            check_evidence
+        ) + _collect_evidence(info_findings)
+        if any(check.covers_all for check in check_evidence):
+            return MeasureVerdict(
+                measure_code=code,
+                verdict=Verdict.CUMPLE,
+                evidence=positive_evidence,
+                rationale=(
+                    "Explicit scanner check covers all applicable requirements "
+                    "of this measure."
+                ),
+            )
         return MeasureVerdict(
             measure_code=code,
-            verdict=Verdict.CUMPLE,
-            evidence=_collect_evidence(positives),
-            rationale=f"{len(positives)} passing scanner signal(s) for this measure.",
+            verdict=Verdict.PARCIAL,
+            evidence=positive_evidence,
+            rationale=f"{positive_count} passing scanner signal(s) for this measure.",
         )
 
     if _has_no_automated_evidence(code):
-        return MeasureVerdict(
-            measure_code=code,
-            verdict=Verdict.NO_EVALUABLE,
-            rationale=(
-                "Documentary/organizational or physical measure with no "
-                "automated evidence and no manual assessment."
-            ),
+        rationale = (
+            "Documentary/organizational or physical measure with no automated "
+            "evidence and no manual assessment."
+        )
+    else:
+        rationale = (
+            "No coverage and no manual assessment: absence of evidence is not "
+            "evidence of compliance."
         )
     return MeasureVerdict(
         measure_code=code,
-        verdict=Verdict.CUMPLE,
-        rationale="No findings for this measure; assumed compliant.",
+        verdict=Verdict.NO_EVALUABLE,
+        rationale=rationale,
     )
 
 
@@ -260,14 +339,18 @@ def evaluate_compliance(
     :param categoria: optional system category; when given, measures not
         applicable to it are reported as ``NO_APLICA``.
     :returns: a :class:`ComplianceReport` with one verdict per catalog measure,
-        the aggregate summary and metadata (including the compliance
-        percentage over applicable measures).
+        the aggregate summary and metadata (including the compliance and
+        coverage percentages over applicable measures, the serialized positive
+        evidence and each scanner's execution status).
     """
     category = _coerce_category(categoria)
     category_label = category.value if category is not None else ""
     applicable = _applicable_codes(catalog, category)
     assessments_by_code = _index_assessments(assessments)
     findings_by_code = _group_findings(scan_report)
+    check_evidence_by_code = _group_check_evidence(
+        scan_report, _failed_codes(scan_report)
+    )
 
     verdicts: list[MeasureVerdict] = [
         _verdict_for_measure(
@@ -276,17 +359,12 @@ def evaluate_compliance(
             category_label=category_label,
             assessment=assessments_by_code.get(code),
             findings=findings_by_code.get(code, []),
+            check_evidence=check_evidence_by_code.get(code, []),
         )
         for code in catalog.measure_codes()
     ]
 
     summary = ComplianceSummary.from_verdicts(verdicts)
-    applicable_count = summary.total - summary.no_aplica
-    compliance_pct = (
-        round(100 * summary.cumple / applicable_count, 2)
-        if applicable_count
-        else 0.0
-    )
     metadata: dict[str, Any] = {
         "catalog_norma": catalog.norma,
         "catalog_version": catalog.version,
@@ -295,9 +373,18 @@ def evaluate_compliance(
         "target": scan_report.target if scan_report is not None else None,
         "scanners": list(scan_report.scanners) if scan_report is not None else [],
         "finding_count": len(scan_report.findings) if scan_report is not None else 0,
+        "evidence": (
+            [item.model_dump(mode="json") for item in scan_report.evidence]
+            if scan_report is not None
+            else []
+        ),
+        "scanner_status": (
+            dict(scan_report.scanner_status) if scan_report is not None else {}
+        ),
         "assessment_count": len(assessments_by_code),
-        "applicable": applicable_count,
-        "compliance_pct": compliance_pct,
+        "applicable": summary.applicable,
+        "compliance_pct": summary.compliance_pct,
+        "coverage_pct": summary.coverage_pct,
     }
 
     return ComplianceReport(

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..catalog.models import Catalog, Medida
 from ..models import ComplianceReport, Evidence, MeasureVerdict, Verdict
-from . import _human_note
+from . import _human_note, positive_evidence_items, scanner_status_items
 
 __all__ = ["render_markdown", "write_markdown"]
 
@@ -30,6 +30,20 @@ _VERDICT_LABELS: dict[str, str] = {
 #: Verdicts rendered as non-conformities (major: no cumple; minor: parcial).
 _NON_CONFORMITY_VERDICTS = (Verdict.NO_CUMPLE, Verdict.PARCIAL)
 
+#: Human-readable labels for the scanner execution statuses.
+_STATUS_LABELS: dict[str, dict[str, str]] = {
+    "es": {
+        "completed": "Completado",
+        "failed": "Fallido",
+        "skipped": "Omitido",
+    },
+    "en": {
+        "completed": "Completed",
+        "failed": "Failed",
+        "skipped": "Skipped",
+    },
+}
+
 _STRINGS: dict[str, dict[str, str]] = {
     "es": {
         "title": "Informe de cumplimiento del ENS",
@@ -43,9 +57,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "exec_summary": "Resumen ejecutivo",
         "verdict": "Veredicto",
         "measure_count": "Nº de medidas",
+        "pct_of_total": "% del total",
         "compliance_pct": "Porcentaje de cumplimiento",
         "scope": "Alcance y metodología",
         "categorisation": "Categorización",
+        "compliance_label": "Cumplimiento",
+        "coverage_label": "Cobertura de evaluación",
+        "applicable": "medidas aplicables",
+        "positive_evidence": "Evidencia positiva",
+        "positive_evidence_lead": (
+            "Comprobaciones de escáner con resultado favorable: qué se comprobó, "
+            "alcance y fecha."
+        ),
+        "no_positive_evidence": "Sin evidencia positiva registrada.",
+        "scanner_status": "Estado de los escáneres",
+        "scanner_status_lead": "Resultado de la ejecución de cada escáner.",
+        "no_scanner_status": "Sin datos de ejecución de escáneres.",
+        "scanner": "Escáner",
+        "status": "Estado",
+        "checked": "Comprobado",
+        "result": "Resultado",
+        "evidence_scope": "Alcance",
+        "observed_at": "Fecha",
+        "failed_scanners": "Escáneres fallidos",
+        "failed_scanners_note": "Sus medidas quedan como no evaluables.",
         "measures_table": "Tabla completa de medidas",
         "code": "Código",
         "measure": "Medida",
@@ -69,9 +104,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "exec_summary": "Executive summary",
         "verdict": "Verdict",
         "measure_count": "Measures",
+        "pct_of_total": "% of total",
         "compliance_pct": "Compliance percentage",
         "scope": "Scope and methodology",
         "categorisation": "Categorisation",
+        "compliance_label": "Compliance",
+        "coverage_label": "Evaluation coverage",
+        "applicable": "applicable measures",
+        "positive_evidence": "Positive evidence",
+        "positive_evidence_lead": (
+            "Scanner checks with a favourable result: what was checked, its "
+            "scope and date."
+        ),
+        "no_positive_evidence": "No positive evidence recorded.",
+        "scanner_status": "Scanner status",
+        "scanner_status_lead": "Outcome of each scanner run.",
+        "no_scanner_status": "No scanner execution data.",
+        "scanner": "Scanner",
+        "status": "Status",
+        "checked": "Checked",
+        "result": "Result",
+        "evidence_scope": "Scope",
+        "observed_at": "Date",
+        "failed_scanners": "Failed scanners",
+        "failed_scanners_note": "Their measures remain not evaluable.",
         "measures_table": "Full measure table",
         "code": "Code",
         "measure": "Measure",
@@ -108,6 +164,27 @@ def _verdict_label(verdict: Verdict, language: str) -> str:
 def _cell(text: object) -> str:
     """Escape a value so it can be safely embedded in a Markdown table cell."""
     return str(text).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _ratio(report: ComplianceReport, key: str, fallback: float) -> float:
+    """Return a percentage, preferring ``report.summary`` over metadata.
+
+    ``report.summary`` is the authoritative source for the aggregate ratios;
+    the equivalent ``metadata`` key is only consulted when the summary does not
+    carry a numeric value. ``fallback`` is the last resort.
+    """
+    value = getattr(report.summary, key, None)
+    if not isinstance(value, (int, float)):
+        value = (report.metadata or {}).get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return float(fallback)
+
+
+def _status_label(status: str, language: str) -> str:
+    """Return the human-readable label of a scanner execution status."""
+    labels = _STATUS_LABELS.get(language, _STATUS_LABELS["es"])
+    return labels.get(status, status)
 
 
 def _ordered_verdicts(
@@ -156,7 +233,7 @@ def _render_metadata(report: ComplianceReport, t: dict[str, str]) -> list[str]:
 def _render_summary(
     report: ComplianceReport, t: dict[str, str], language: str
 ) -> list[str]:
-    """Render the executive summary (verdict counts and compliance ratio)."""
+    """Render the executive summary: the five counts and both ratios."""
     summary = report.summary
     total = summary.total or 1
     rows = [
@@ -166,17 +243,27 @@ def _render_summary(
         (Verdict.NO_APLICA, summary.no_aplica),
         (Verdict.NO_EVALUABLE, summary.no_evaluable),
     ]
-    compliance_pct = report.metadata.get("compliance_pct")
+    compliance_pct = _ratio(report, "compliance_pct", summary.compliance_pct)
+    coverage_pct = _ratio(report, "coverage_pct", summary.coverage_pct)
+    covered = summary.applicable - summary.no_evaluable
     lines = [
         f"## {t['exec_summary']}",
         "",
+        f"Se han evaluado **{summary.total}** medidas del catálogo ENS.",
+        "",
         (
-            f"Se han evaluado **{summary.total}** medidas del catálogo ENS. "
-            f"El porcentaje de cumplimiento sobre las medidas aplicables es "
-            f"**{compliance_pct if compliance_pct is not None else 0.0} %**."
+            f"- **{t['compliance_label']}:** **{compliance_pct} %** "
+            f"({summary.cumple} / {summary.applicable} {t['applicable']})."
+        ),
+        (
+            f"- **{t['coverage_label']}:** **{coverage_pct} %** "
+            f"({covered} / {summary.applicable} {t['applicable']})."
         ),
         "",
-        f"| {t['verdict']} | {t['measure_count']} | % |",
+        # The headline ratios are applicable-based; the table below shows each
+        # verdict's share of the *whole* catalog, so its column is labelled
+        # explicitly ("% del total") to avoid a mixed denominator.
+        f"| {t['verdict']} | {t['measure_count']} | {t['pct_of_total']} |",
         "|---|---:|---:|",
     ]
     for verdict, count in rows:
@@ -185,6 +272,58 @@ def _render_summary(
             f"| {_verdict_label(verdict, language)} | {count} | {pct} % |"
         )
     lines.append("")
+    return lines
+
+
+def _render_positive_evidence(
+    report: ComplianceReport, t: dict[str, str]
+) -> list[str]:
+    """Render the positive evidence section from the report metadata."""
+    items = positive_evidence_items(report)
+    lines = [f"## {t['positive_evidence']}", "", f"_{t['positive_evidence_lead']}_", ""]
+    if not items:
+        lines += [f"_{t['no_positive_evidence']}_", ""]
+        return lines
+    lines += [
+        (
+            f"| {t['scanner']} | {t['checked']} | {t['result']} | "
+            f"{t['evidence_scope']} | {t['observed_at']} |"
+        ),
+        "|---|---|---|---|---|",
+    ]
+    for item in items:
+        lines.append(
+            f"| `{_cell(item['scanner'])}` | {_cell(item['checked'])} | "
+            f"{_cell(item['result'])} | {_cell(item['scope'])} | "
+            f"{_cell(item['observed_at'] or '—')} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _render_scanner_status(
+    report: ComplianceReport, t: dict[str, str], language: str
+) -> list[str]:
+    """Render each scanner's execution status, surfacing failures explicitly."""
+    statuses = scanner_status_items(report)
+    lines = [f"## {t['scanner_status']}", "", f"_{t['scanner_status_lead']}_", ""]
+    if not statuses:
+        lines += [f"_{t['no_scanner_status']}_", ""]
+        return lines
+    lines += [f"| {t['scanner']} | {t['status']} |", "|---|---|"]
+    for scanner in sorted(statuses):
+        lines.append(
+            f"| `{_cell(scanner)}` | "
+            f"{_cell(_status_label(statuses[scanner], language))} |"
+        )
+    lines.append("")
+    failed = sorted(s for s, status in statuses.items() if status == "failed")
+    if failed:
+        listed = ", ".join(f"`{_cell(scanner)}`" for scanner in failed)
+        lines += [
+            f"**{t['failed_scanners']}:** {listed}. {t['failed_scanners_note']}",
+            "",
+        ]
     return lines
 
 
@@ -209,9 +348,10 @@ def _render_scope(
             "Metodología: los veredictos se consolidan con `evaluate_compliance` "
             "siguiendo este orden de precedencia: (1) evaluación manual explícita; "
             "(2) aplicabilidad según la categoría del sistema; (3) hallazgos de "
-            "los escáneres deterministas; (4) medidas documentales/organizativas "
-            "o físicas sin evidencia automatizable (no evaluables); y (5) "
-            "cumplimiento por defecto cuando no hay hallazgos."
+            "los escáneres deterministas; (4) evidencia positiva registrada por "
+            "los escáneres; y (5) sin evidencia ni valoración, la medida se marca "
+            "como no evaluable (la ausencia de hallazgos no es prueba de "
+            "cumplimiento)."
         ),
         "",
         f"- Escáneres ejecutados: {scanner_list}.",
@@ -369,6 +509,8 @@ def render_markdown(
     lines += _render_summary(report, t, language)
     lines += _render_scope(report, t, catalog)
     lines += _render_categorisation(report, t)
+    lines += _render_positive_evidence(report, t)
+    lines += _render_scanner_status(report, t, language)
     lines += _render_measures_table(report, catalog, t, language)
     lines += _render_non_conformities(report, catalog, t, language)
     lines += _render_recommendations(report, catalog, t)

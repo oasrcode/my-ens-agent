@@ -25,7 +25,7 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, iter_source_files, line_number_for, read_text
 
 __all__ = ["DependenciesScanner"]
@@ -76,23 +76,39 @@ class DependenciesScanner(Scanner):
     id = "code.dependencies"
     description = "Check dependency manifests for unpinned/loose or risky packages."
     category = "code"
+    covers = ("dependency.outdated",)
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
             name = path.name.lower()
             if name == "requirements.txt" or _REQUIREMENTS.match(path.name):
+                examined += 1
                 findings.extend(self._parse_requirements(path, text))
             elif name == "pyproject.toml":
+                examined += 1
                 findings.extend(self._parse_pyproject(path, text))
             elif name == "package.json":
+                examined += 1
                 findings.extend(self._parse_package_json(path, text))
             elif name == "go.mod":
+                examined += 1
                 findings.extend(self._parse_go_mod(path, text))
-        return findings
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=self.covers,
+            examined=examined,
+            checked=(
+                "Checked dependency manifests for unpinned or deprecated/risky "
+                "packages."
+            ),
+        )
 
     # -- requirements*.txt ---------------------------------------------------
     def _parse_requirements(self, path: Path, text: str) -> list[Finding]:

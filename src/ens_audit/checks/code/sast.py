@@ -24,13 +24,51 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, iter_source_files, read_text
 
-__all__ = ["SastScanner"]
+__all__ = ["SOURCE_CODE_SUFFIXES", "SastScanner", "is_source_code"]
 
 _INJECTION_SQL = "injection.sql"
 _INJECTION_COMMAND = "injection.command"
+
+#: Suffixes that hold executable source code the risky-sink rules can assess.
+#: Deliberately narrower than ``_common.SOURCE_SUFFIXES``: manifests and
+#: configuration (``pyproject.toml``, ``package.json``, ``.env``, ``.yaml``, ...)
+#: are read for other checks but are not source code, so a clean pass over them
+#: says nothing about ``mp.sw.1``.
+SOURCE_CODE_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".pyi",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".kt",
+        ".go",
+        ".rb",
+        ".php",
+        ".cs",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".hpp",
+        ".sh",
+        ".bash",
+        ".ps1",
+        ".sql",
+    }
+)
+
+
+def is_source_code(path: Path) -> bool:
+    """Whether ``path`` is source code, as opposed to a manifest or config."""
+    return path.suffix.lower() in SOURCE_CODE_SUFFIXES
 
 # An SQL execution API call.
 _SQL_EXEC = re.compile(
@@ -73,15 +111,35 @@ class SastScanner(Scanner):
     id = "code.sast"
     description = "Detect risky sinks (SQL injection, eval/exec, shell, unsafe loads)."
     category = "code"
+    covers = ("injection.sql", "injection.command")
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
+        evaluated: list[str] = []
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
+            examined += 1
             findings.extend(self._scan_file(path, text))
-        return findings
+            # ``mp.sw.1`` is a secure-development measure: a manifest or config
+            # file is not source code, so scanning it certifies nothing.
+            if is_source_code(path):
+                for kind in self.covers:
+                    if kind not in evaluated:
+                        evaluated.append(kind)
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=evaluated,
+            examined=examined,
+            checked=(
+                "Scanned source for SQL injection, eval/exec, shell execution "
+                "and unsafe deserialisation."
+            ),
+        )
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

@@ -21,7 +21,7 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, find_line, iter_files, read_text
 
 __all__ = ["DockerfileScanner"]
@@ -109,15 +109,28 @@ class DockerfileScanner(Scanner):
         "hardcoded secrets and remote ADD."
     )
     category = "infra"
+    covers = ("config.debug_enabled", "dependency.outdated", "secret.hardcoded")
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
         for path in iter_files(target, _is_dockerfile):
             text = read_text(path)
             if text is None:
                 continue
+            examined += 1
             findings.extend(self._scan_file(path, text))
-        return findings
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=self.covers,
+            examined=examined,
+            checked=(
+                "Checked Dockerfiles for root user, unpinned base images, "
+                "hardcoded secrets and remote ADD."
+            ),
+        )
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

@@ -22,7 +22,7 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, find_line, iter_files, read_text
 
 __all__ = ["TerraformScanner"]
@@ -44,8 +44,16 @@ _ENCRYPTION_OFF = re.compile(
     r"(?i)\b(?:encrypted|storage_encrypted|encryption_at_rest)\s*=\s*false"
 )
 _S3_BUCKET = re.compile(r"(?i)\bresource\s+\"aws_s3_bucket\"")
+_SECURITY_GROUP = re.compile(r"(?i)\bresource\s+\"aws_security_group\"")
 _S3_ENCRYPTION = re.compile(r"(?i)server_side_encryption")
 _S3_LOGGING = re.compile(r"(?i)aws_s3_bucket_logging|\blogging\b")
+
+#: Per-kind description of what was checked, used for positive evidence.
+_CHECKED: dict[str, str] = {
+    _EXPOSED: "Checked Terraform security groups for ingress open to the internet.",
+    _UNENCRYPTED: "Checked Terraform storage resources for encryption at rest.",
+    _NO_LOGGING: "Checked S3 buckets for access logging configuration.",
+}
 
 
 def _is_terraform(path: Path) -> bool:
@@ -63,15 +71,51 @@ class TerraformScanner(Scanner):
         "security groups and missing access logging."
     )
     category = "infra"
+    covers = (
+        "network.service_exposed",
+        "storage.unencrypted",
+        "logging.audit_disabled",
+    )
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
+        evaluated: list[str] = []
         for path in iter_files(target, _is_terraform):
             text = read_text(path)
             if text is None:
                 continue
+            examined += 1
             findings.extend(self._scan_file(path, text))
-        return findings
+            for kind in self._evaluated_kinds(text):
+                if kind not in evaluated:
+                    evaluated.append(kind)
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=evaluated,
+            examined=examined,
+            checked=_CHECKED,
+        )
+
+    @staticmethod
+    def _evaluated_kinds(text: str) -> list[str]:
+        """Return, in ``covers`` order, the kinds actually applied to ``text``.
+
+        A kind is evaluated only when its relevant artifact is present: the
+        network check needs a security group (a bucket alone is not a statement
+        about the network perimeter), while the storage/logging checks need an
+        S3 bucket or an explicit encryption setting.
+        """
+        kinds: list[str] = []
+        if _SECURITY_GROUP.search(text) or _ANY_ADDRESS.search(text):
+            kinds.append(_EXPOSED)
+        if _S3_BUCKET.search(text) or _ENCRYPTION_OFF.search(text):
+            kinds.append(_UNENCRYPTED)
+        if _S3_BUCKET.search(text):
+            kinds.append(_NO_LOGGING)
+        return kinds
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

@@ -28,7 +28,7 @@ import yaml
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, find_line, iter_files, read_text
 
 __all__ = ["ComposeScanner"]
@@ -121,8 +121,9 @@ class ComposeScanner(Scanner):
         "non-root, resource limits, secrets and network policies."
     )
     category = "infra"
+    covers = ("config.debug_enabled", "network.service_exposed", "secret.hardcoded")
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         entries: list[tuple[Path, str, list[Any]]] = []
         for path in iter_files(target, _is_yaml):
             text = read_text(path)
@@ -137,12 +138,25 @@ class ComposeScanner(Scanner):
         )
 
         findings: list[Finding] = []
+        examined = 0
         for path, text, docs in entries:
             if _is_k8s(docs):
+                examined += 1
                 findings.extend(self._scan_k8s(path, text, docs, has_network_policy))
             elif _COMPOSE_NAME.match(path.name) or _looks_like_compose(docs):
+                examined += 1
                 findings.extend(self._scan_compose(path, text, docs))
-        return findings
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=self.covers,
+            examined=examined,
+            checked=(
+                "Checked Compose/Kubernetes manifests for privileges, host "
+                "namespaces, resource limits, non-root and plaintext secrets."
+            ),
+        )
 
     # -- Docker Compose ---------------------------------------------------
 

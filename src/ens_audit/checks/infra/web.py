@@ -21,7 +21,7 @@ from pathlib import Path
 from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
-from ..base import Scanner
+from ..base import Scanner, ScannerResult, finalize_scan
 from ._common import file_line_finding, find_line, iter_files, read_text
 
 __all__ = ["WebScanner"]
@@ -53,6 +53,20 @@ _WEAK_CIPHER_TOKEN = re.compile(
     r"(?i)\b(?:RC4|ARC4|3DES|DES|DES40|MD5|NULL|EXPORT|ANON|ADH|AECDH|"
     r"LOW|MEDIUM|SEED|IDEA|CAMELLIA|PSK|SRP)\b"
 )
+
+#: Per-kind description of what was checked, used for positive evidence.
+_CHECKED: dict[str, str] = {
+    _WEAK_CRYPTO: (
+        "Checked web server TLS configuration for deprecated protocols and "
+        "weak cipher suites."
+    ),
+    _NO_TLS: (
+        "Checked web server transport for missing HSTS and plain HTTP listeners."
+    ),
+    _INSECURE_CONFIG: (
+        "Checked web server responses for missing hardening security headers."
+    ),
+}
 
 
 def _is_web_config(path: Path) -> bool:
@@ -92,15 +106,51 @@ class WebScanner(Scanner):
         "security headers, plain HTTP listeners."
     )
     category = "infra"
+    covers = ("crypto.weak_algorithm", "transport.tls_missing", "config.debug_enabled")
 
-    def run(self, target: Path) -> list[Finding]:
+    def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
+        examined = 0
+        evaluated: list[str] = []
         for path in iter_files(target, _is_web_config):
             text = read_text(path)
             if text is None or not _WEB_MARKER.search(text):
                 continue
+            examined += 1
             findings.extend(self._scan_file(path, text))
-        return findings
+            for kind in self._evaluated_kinds(text):
+                if kind not in evaluated:
+                    evaluated.append(kind)
+        return finalize_scan(
+            self,
+            target,
+            findings,
+            evaluated_kinds=evaluated,
+            examined=examined,
+            checked=_CHECKED,
+        )
+
+    @staticmethod
+    def _evaluated_kinds(text: str) -> list[str]:
+        """Return, in ``covers`` order, the kinds actually applied to ``text``.
+
+        The TLS/crypto and HSTS/header checks only run against a TLS-enabled
+        server (``ssl`` directive or a ``listen 443`` listener): certifying them
+        on a plain-HTTP config would claim checks that never happened. A plain
+        HTTP listener still exercises the transport check (and fails it), so the
+        kind is reported without surviving measures.
+        """
+        has_tls = bool(re.search(r"(?i)ssl", text)) or bool(
+            _TLS_LISTENER.search(text)
+        )
+        kinds: list[str] = []
+        if has_tls:
+            kinds.append(_WEAK_CRYPTO)
+            kinds.append(_NO_TLS)
+            kinds.append(_INSECURE_CONFIG)
+        elif _PLAIN_HTTP.search(text):
+            kinds.append(_NO_TLS)
+        return kinds
 
     def _scan_file(self, path: Path, text: str) -> list[Finding]:
         findings: list[Finding] = []

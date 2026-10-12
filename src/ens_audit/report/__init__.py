@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import importlib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 from ..catalog.models import Catalog
-from ..models import ComplianceReport
+from ..models import CheckEvidence, ComplianceReport, ScanReport
 
 #: Auto-generated rationales produced by the evaluator (see
 #: :mod:`ens_audit.evaluate`). They are English and machine-authored, so the
@@ -32,6 +34,15 @@ _AUTO_RATIONALE_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"evidence and no manual assessment\.$"
     ),
     re.compile(r"^No findings for this measure; assumed compliant\.$"),
+    # R1 evidence-based semantics: new evaluator defaults.
+    re.compile(
+        r"^Explicit scanner check covers all applicable requirements of this "
+        r"measure\.$"
+    ),
+    re.compile(
+        r"^No coverage and no manual assessment: absence of evidence is not "
+        r"evidence of compliance\.$"
+    ),
 )
 
 
@@ -46,6 +57,91 @@ def _human_note(rationale: str) -> str:
     if not text or _is_auto_rationale(text):
         return ""
     return text
+
+
+def _normalise_observed_at(value: object) -> str:
+    """Return an ``YYYY-MM-DD`` date label for a raw evidence timestamp.
+
+    Accepts a :class:`datetime.datetime`, a :class:`datetime.date`, or an
+    already-serialized ISO-8601 string; anything else yields an empty string so
+    the renderers can fall back to a placeholder.
+    """
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:10]
+    return ""
+
+
+def _metadata_scan_report(report: ComplianceReport) -> ScanReport | None:
+    """Recover a :class:`ScanReport` carried in ``report.metadata``, if any.
+
+    The evaluator may attach the whole scan report (``metadata["scan_report"]``)
+    instead of flattening its fields; both shapes are supported.
+    """
+    raw = report.metadata.get("scan_report")
+    if isinstance(raw, ScanReport):
+        return raw
+    if isinstance(raw, Mapping):
+        try:
+            return ScanReport(**raw)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+    return None
+
+
+def positive_evidence_items(report: ComplianceReport) -> list[dict[str, Any]]:
+    """Normalise the report's positive check evidence to plain dictionaries.
+
+    Positive evidence is the ``ScanReport.evidence`` (a list of
+    :class:`~ens_audit.models.CheckEvidence`) carried into
+    ``report.metadata["evidence"]``. Each item is returned with stable keys
+    (``scanner``, ``measure_codes``, ``checked``, ``scope``, ``result``,
+    ``observed_at`` as ``YYYY-MM-DD`` and ``covers_all``) so every renderer
+    presents the same data.
+    """
+    raw = report.metadata.get("evidence")
+    if raw is None:
+        scan = _metadata_scan_report(report)
+        raw = list(scan.evidence) if scan is not None else []
+    items: list[dict[str, Any]] = []
+    for entry in raw or []:
+        if isinstance(entry, CheckEvidence):
+            data: dict[str, Any] = entry.model_dump()
+        elif isinstance(entry, Mapping):
+            data = dict(entry)
+        else:  # pragma: no cover - defensive guard
+            continue
+        items.append(
+            {
+                "scanner": str(data.get("scanner") or ""),
+                "measure_codes": [
+                    str(code) for code in (data.get("measure_codes") or [])
+                ],
+                "checked": str(data.get("checked") or ""),
+                "scope": str(data.get("scope") or ""),
+                "result": str(data.get("result") or ""),
+                "observed_at": _normalise_observed_at(data.get("observed_at")),
+                "covers_all": bool(data.get("covers_all", False)),
+            }
+        )
+    return items
+
+
+def scanner_status_items(report: ComplianceReport) -> dict[str, str]:
+    """Normalise ``ScanReport.scanner_status`` carried in the report metadata.
+
+    Returns a ``{scanner: status}`` mapping (statuses are ``completed``,
+    ``failed`` or ``skipped``). A ``failed`` scanner is surfaced by every
+    renderer, never hidden.
+    """
+    raw = report.metadata.get("scanner_status")
+    if not raw:
+        scan = _metadata_scan_report(report)
+        raw = scan.scanner_status if scan is not None else {}
+    return {str(scanner): str(status) for scanner, status in (raw or {}).items()}
 
 
 # Imported after the shared rationale helpers so the sibling renderers can

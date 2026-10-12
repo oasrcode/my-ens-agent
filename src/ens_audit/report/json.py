@@ -14,11 +14,12 @@ from pathlib import Path
 
 from ..catalog.models import Catalog
 from ..models import ComplianceReport, Evidence, MeasureVerdict
+from . import positive_evidence_items, scanner_status_items
 
 __all__ = ["render_json", "write_json"]
 
 #: Current JSON schema version of the rendered document.
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def _ordered_verdicts(
@@ -44,9 +45,26 @@ def _evidence_to_dict(evidence: Evidence) -> dict[str, str]:
     }
 
 
+def _summary_value(
+    summary: object, metadata: dict[str, object], key: str
+) -> object:
+    """Return a summary attribute, falling back to ``metadata`` when absent."""
+    value = getattr(summary, key, None)
+    if value is None:
+        return metadata.get(key)
+    return value
+
+
 def _summary_to_dict(report: ComplianceReport) -> dict[str, object]:
-    """Serialize the aggregate verdict counts plus derived compliance ratio."""
+    """Serialize the aggregate verdict counts plus both derived ratios.
+
+    ``report.summary`` is the authoritative source: the applicable count and
+    both ratios are read from it, and the equivalent ``metadata`` keys are used
+    only as a fallback when the summary does not carry a value (so a hand-built
+    report whose metadata is richer still renders consistently).
+    """
     summary = report.summary
+    metadata = report.metadata or {}
     return {
         "total": summary.total,
         "cumple": summary.cumple,
@@ -54,8 +72,9 @@ def _summary_to_dict(report: ComplianceReport) -> dict[str, object]:
         "parcial": summary.parcial,
         "no_aplica": summary.no_aplica,
         "no_evaluable": summary.no_evaluable,
-        "applicable": report.metadata.get("applicable", 0),
-        "compliance_pct": report.metadata.get("compliance_pct", 0.0),
+        "applicable": _summary_value(summary, metadata, "applicable"),
+        "compliance_pct": _summary_value(summary, metadata, "compliance_pct"),
+        "coverage_pct": _summary_value(summary, metadata, "coverage_pct"),
     }
 
 
@@ -82,6 +101,8 @@ def build_document(
         "generated_at": datetime.now(UTC).isoformat(),
         "category": report.category,
         "summary": _summary_to_dict(report),
+        "evidence": positive_evidence_items(report),
+        "scanner_status": scanner_status_items(report),
         "verdicts": verdicts,
     }
 

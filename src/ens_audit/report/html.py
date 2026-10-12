@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import ComplianceReport, Verdict
-from . import _human_note
+from . import _human_note, positive_evidence_items, scanner_status_items
 
 if TYPE_CHECKING:  # pragma: no cover - import used for typing only
     from ..catalog.models import Catalog, Medida
@@ -58,6 +58,28 @@ _STRINGS: dict[str, dict[str, str]] = {
         "compliance": "Cumplimiento",
         "applicable": "medidas aplicables",
         "of_total": "sobre el total evaluado",
+        "coverage": "Cobertura de evaluación",
+        "coverage_sub": "medidas aplicables con evidencia",
+        "positive_evidence": "Evidencia positiva",
+        "positive_evidence_lead": (
+            "Comprobaciones de escáner con resultado favorable: qué se comprobó, "
+            "alcance y fecha."
+        ),
+        "no_positive_evidence": "Sin evidencia positiva registrada.",
+        "scanner_status": "Estado de los escáneres",
+        "scanner_status_lead": "Resultado de la ejecución de cada escáner.",
+        "no_scanner_status": "Sin datos de ejecución de escáneres.",
+        "scanner": "Escáner",
+        "status": "Estado",
+        "checked": "Comprobado",
+        "result": "Resultado",
+        "scope": "Alcance",
+        "observed_at": "Fecha",
+        "status_completed": "Completado",
+        "status_failed": "Fallido",
+        "status_skipped": "Omitido",
+        "failed_scanners": "Escáneres fallidos",
+        "failed_note": "Sus medidas quedan como no evaluables.",
         "nonconformities": "No conformidades",
         "nonconformities_lead": (
             "Medidas con veredicto «No cumple» o «Parcial». "
@@ -143,6 +165,13 @@ _EVIDENCE_KIND_LABELS: dict[str, str] = {
     "file_line": "Fichero / línea",
     "config": "Configuración",
     "note": "Nota",
+}
+
+#: Scanner execution statuses to their UI copy keys.
+_STATUS_STRING_KEYS: dict[str, str] = {
+    "completed": "status_completed",
+    "failed": "status_failed",
+    "skipped": "status_skipped",
 }
 
 #: Verdict counts property names on the summary model, in display order.
@@ -255,6 +284,24 @@ def _compliance_pct(report: ComplianceReport) -> float:
     if applicable <= 0:
         return 0.0
     return max(0.0, min(100.0, round(100 * summary.cumple / applicable, 2)))
+
+
+def _coverage_pct(report: ComplianceReport) -> float:
+    """Evaluation-coverage percentage over applicable measures.
+
+    Coverage is the share of applicable measures that have *some* evidence,
+    i.e. that are not ``no_evaluable``: ``(applicable - no_evaluable) /
+    applicable``.
+    """
+    value = report.metadata.get("coverage_pct")
+    if isinstance(value, (int, float)):
+        return max(0.0, min(100.0, float(value)))
+    summary = report.summary
+    applicable = summary.total - summary.no_aplica
+    if applicable <= 0:
+        return 0.0
+    covered = applicable - summary.no_evaluable
+    return max(0.0, min(100.0, round(100 * covered / applicable, 2)))
 
 
 def _applicable_count(report: ComplianceReport) -> int:
@@ -426,7 +473,9 @@ def _render_summary(report: ComplianceReport, language: str) -> str:
         )
 
     pct = _compliance_pct(report)
+    coverage = _coverage_pct(report)
     applicable = _applicable_count(report)
+    covered = applicable - summary.no_evaluable
     return (
         '<section class="summary" aria-labelledby="h-resumen">'
         f'<h2 id="h-resumen">{_esc(_t(language, "summary"))}</h2>'
@@ -444,8 +493,106 @@ def _render_summary(report: ComplianceReport, language: str) -> str:
         f'<span class="bar-fill" style="width:{pct:.2f}%"></span>'
         "</div>"
         "</div>"
+        '<div class="compliance compliance--coverage">'
+        f'<p class="compliance-value">{_esc(_format_pct(coverage))}'
+        '<span class="compliance-unit">%</span></p>'
+        f'<p class="compliance-label">{_esc(_t(language, "coverage"))}</p>'
+        f'<p class="compliance-sub">{covered} '
+        f"{_esc(_t(language, 'coverage_sub'))}</p>"
+        '<div class="bar" role="img" '
+        f'aria-label="{_esc(_t(language, "coverage"))}: '
+        f'{_esc(_format_pct(coverage))}%">'
+        f'<span class="bar-fill" style="width:{coverage:.2f}%"></span>'
+        "</div>"
+        "</div>"
         f'<ul class="stats">{"".join(tiles)}</ul>'
         "</div>"
+        "</section>"
+    )
+
+
+def _render_positive_evidence(report: ComplianceReport, language: str) -> str:
+    """Render the positive evidence section as a table."""
+    items = positive_evidence_items(report)
+    if not items:
+        body = (
+            f'<p class="empty">{_esc(_t(language, "no_positive_evidence"))}</p>'
+        )
+    else:
+        headers = (
+            f'<th scope="col">{_esc(_t(language, "scanner"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "checked"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "result"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "scope"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "observed_at"))}</th>'
+        )
+        rows: list[str] = []
+        for item in items:
+            rows.append(
+                "<tr>"
+                f'<td><code>{_esc(item["scanner"])}</code></td>'
+                f'<td class="ev-checked">{_esc(item["checked"])}</td>'
+                f'<td>{_esc(item["result"])}</td>'
+                f'<td>{_esc(item["scope"])}</td>'
+                f'<td class="ev-date">{_esc(item["observed_at"] or "—")}</td>'
+                "</tr>"
+            )
+        body = (
+            '<div class="table-wrap"><table>'
+            f"<thead><tr>{headers}</tr></thead>"
+            f'<tbody>{"".join(rows)}</tbody></table></div>'
+        )
+    return (
+        '<section class="evidence-summary" aria-labelledby="h-evidencia">'
+        f'<h2 id="h-evidencia">{_esc(_t(language, "positive_evidence"))}</h2>'
+        f'<p class="lead">{_esc(_t(language, "positive_evidence_lead"))}</p>'
+        f"{body}"
+        "</section>"
+    )
+
+
+def _render_scanner_status(report: ComplianceReport, language: str) -> str:
+    """Render each scanner's execution status, surfacing failures explicitly."""
+    statuses = scanner_status_items(report)
+    if not statuses:
+        body = f'<p class="empty">{_esc(_t(language, "no_scanner_status"))}</p>'
+        note = ""
+    else:
+        rows: list[str] = []
+        for scanner in sorted(statuses):
+            status = statuses[scanner]
+            label_key = _STATUS_STRING_KEYS.get(status)
+            label = _t(language, label_key) if label_key else status
+            row_class = ' class="status-failed"' if status == "failed" else ""
+            rows.append(
+                f"<tr{row_class}>"
+                f'<td><code>{_esc(scanner)}</code></td>'
+                f"<td>{_esc(label)}</td>"
+                "</tr>"
+            )
+        body = (
+            '<div class="table-wrap"><table>'
+            "<thead><tr>"
+            f'<th scope="col">{_esc(_t(language, "scanner"))}</th>'
+            f'<th scope="col">{_esc(_t(language, "status"))}</th>'
+            "</tr></thead>"
+            f'<tbody>{"".join(rows)}</tbody></table></div>'
+        )
+        failed = sorted(s for s, st in statuses.items() if st == "failed")
+        if failed:
+            names = ", ".join(f"<code>{_esc(s)}</code>" for s in failed)
+            note = (
+                '<p class="failed-note">'
+                f'<strong>{_esc(_t(language, "failed_scanners"))}:</strong> '
+                f'{names}. {_esc(_t(language, "failed_note"))}</p>'
+            )
+        else:
+            note = ""
+    return (
+        '<section class="scanner-status" aria-labelledby="h-escanneres">'
+        f'<h2 id="h-escanneres">{_esc(_t(language, "scanner_status"))}</h2>'
+        f'<p class="lead">{_esc(_t(language, "scanner_status_lead"))}</p>'
+        f"{body}{note}"
         "</section>"
     )
 
@@ -574,6 +721,8 @@ def render_html(
 {_render_header(report, lang)}
 <main>
 {_render_summary(report, lang)}
+{_render_scanner_status(report, lang)}
+{_render_positive_evidence(report, lang)}
 {_render_nonconformities(report, catalog, lang)}
 {_render_recommendations(report, lang)}
 <section class="measures" aria-labelledby="h-medidas">
@@ -689,8 +838,8 @@ h2{font-size:clamp(1.3rem,2.4vw,1.7rem);margin:0 0 .3rem;}
 .lead{color:var(--ink-soft);margin:.1rem 0 1.2rem;max-width:70ch;}
 .summary-grid{
   display:grid;
-  grid-template-columns:minmax(12rem,1fr) 2.2fr;
-  gap:1.5rem;
+  grid-template-columns:minmax(10rem,1fr) minmax(10rem,1fr) 2.2fr;
+  gap:1.2rem;
   align-items:center;
 }
 .compliance{
@@ -698,6 +847,11 @@ h2{font-size:clamp(1.3rem,2.4vw,1.7rem);margin:0 0 .3rem;}
   border-left:4px solid var(--brand);
   padding:1rem 1.2rem;
 }
+.compliance--coverage{
+  background:var(--surface-2);
+  border-left-color:var(--line-strong);
+}
+.compliance--coverage .compliance-value{color:var(--ink-soft);}
 .compliance-value{
   font-family:var(--serif);
   font-size:clamp(2.6rem,7vw,3.6rem);
@@ -754,6 +908,17 @@ h2{font-size:clamp(1.3rem,2.4vw,1.7rem);margin:0 0 .3rem;}
 .nc-head code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:.05rem .35rem;border-radius:4px;}
 .nc-detail{margin:.15rem 0 0;color:var(--ink-soft);}
 .rec-list li{margin-bottom:.4rem;}
+.evidence-summary .ev-checked{min-width:14rem;}
+.evidence-summary .ev-date{white-space:nowrap;}
+tr.status-failed td{background:var(--no-cumple-bg);}
+.failed-note{
+  margin:.8rem 0 0;
+  padding:.6rem .8rem;
+  background:var(--no-cumple-bg);
+  border-left:4px solid var(--no-cumple-line);
+  color:var(--no-cumple-ink);
+}
+.failed-note strong{margin-right:.2rem;}
 h2.marco{
   font-size:clamp(1.25rem,2.2vw,1.55rem);
   margin:2rem 0 .4rem;

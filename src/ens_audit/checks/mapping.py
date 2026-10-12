@@ -19,6 +19,7 @@ from ens_audit.catalog.models import Catalog
 __all__ = [
     "MEASURE_MAP",
     "MeasureRef",
+    "covered_measures",
     "known_kinds",
     "measures_for",
     "validate_mapping",
@@ -173,10 +174,13 @@ MEASURE_MAP: dict[str, list[MeasureRef]] = {
             ),
             guides=["CCN-STIC-807"],
         ),
+    ],
+    "backup.disabled": [
         MeasureRef(
             code="mp.info.6",
             rationale=(
-                "Backups holding unencrypted data must still protect confidentiality."
+                "Backups must exist and be retained: a disabled backup or a "
+                "zero retention leaves the information unrecoverable."
             ),
             guides=["CCN-STIC-807"],
         ),
@@ -196,6 +200,16 @@ def measures_for(kind: str) -> list[MeasureRef]:
 def known_kinds() -> list[str]:
     """Return all rule kinds present in the mapping table."""
     return list(MEASURE_MAP)
+
+
+def covered_measures() -> set[str]:
+    """Return every measure code reachable from any rule kind in the table.
+
+    This is the total coverage the deterministic scanners can speak to: the
+    union of :func:`measures_for` over all rule kinds. It is the single source
+    of truth a caller should use to reason about scanner coverage.
+    """
+    return {ref.code for refs in MEASURE_MAP.values() for ref in refs}
 
 
 def validate_mapping(catalog: Catalog) -> dict[str, list[str]]:
