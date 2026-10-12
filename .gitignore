@@ -18,3 +18,6 @@ dist/
 
 # Local handoff overlay (sensitive/ephemeral; never committed)
 .opencode/handoff.local.md
+
+# Local agent planning scratch (ephemeral; never committed)
+.opencode/plans/
