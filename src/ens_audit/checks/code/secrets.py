@@ -16,7 +16,7 @@ from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
 from ..base import Scanner, ScannerResult, finalize_scan
-from ._common import file_line_finding, iter_source_files, read_text
+from ._common import file_line_finding, is_source_code, iter_source_files, read_text
 
 __all__ = ["SecretsScanner"]
 
@@ -75,17 +75,23 @@ class SecretsScanner(Scanner):
     def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
         examined = 0
+        source_examined = False
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
             examined += 1
+            # ``mp.si.2`` / ``op.exp.10`` are protected by source-code checks: a
+            # dependency manifest or config file is not source code, so a clean
+            # pass over it certifies nothing (same class as the SAST gap).
+            if is_source_code(path):
+                source_examined = True
             findings.extend(self._scan_file(path, text))
         return finalize_scan(
             self,
             target,
             findings,
-            evaluated_kinds=self.covers,
+            evaluated_kinds=self.covers if source_examined else (),
             examined=examined,
             checked=(
                 "Scanned source files for hardcoded credentials, tokens and "

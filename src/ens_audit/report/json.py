@@ -19,7 +19,7 @@ from . import positive_evidence_items, scanner_status_items
 __all__ = ["render_json", "write_json"]
 
 #: Current JSON schema version of the rendered document.
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 
 def _ordered_verdicts(

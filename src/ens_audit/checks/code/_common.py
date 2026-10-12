@@ -15,8 +15,10 @@ from ens_audit.checks.mapping import measures_for
 from ens_audit.models import Evidence, EvidenceKind, Finding, Severity
 
 __all__ = [
+    "SOURCE_CODE_SUFFIXES",
     "SOURCE_SUFFIXES",
     "file_line_finding",
+    "is_source_code",
     "iter_source_files",
     "line_number_for",
     "read_text",
@@ -81,6 +83,45 @@ SOURCE_SUFFIXES = frozenset(
         ".txt",
     }
 )
+
+#: Suffixes that hold executable source code the risky-sink rules can assess.
+#: Deliberately narrower than :data:`SOURCE_SUFFIXES`: manifests and
+#: configuration (``pyproject.toml``, ``package.json``, ``.env``, ``.yaml``, ...)
+#: are read for other checks but are not source code, so a clean pass over them
+#: says nothing about the source-code measures.
+SOURCE_CODE_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".pyi",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".kt",
+        ".go",
+        ".rb",
+        ".php",
+        ".cs",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".hpp",
+        ".sh",
+        ".bash",
+        ".ps1",
+        ".sql",
+    }
+)
+
+
+def is_source_code(path: Path) -> bool:
+    """Whether ``path`` is source code, as opposed to a manifest or config."""
+    return path.suffix.lower() in SOURCE_CODE_SUFFIXES
+
 
 #: Never read files bigger than this (defensive; keeps scans fast).
 _MAX_FILE_BYTES = 1_000_000

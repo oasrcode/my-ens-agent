@@ -26,14 +26,12 @@ from ..models import CheckEvidence, ComplianceReport, ScanReport
 _AUTO_RATIONALE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^Explicit manual assessment\.$"),
     re.compile(r"^Measure not applicable to category .*\.$"),
-    re.compile(r"^\d+ failing and \d+ passing scanner signal\(s\) for this measure\.$"),
     re.compile(r"^\d+ failing scanner finding\(s\) for this measure\.$"),
     re.compile(r"^\d+ passing scanner signal\(s\) for this measure\.$"),
     re.compile(
         r"^Documentary/organizational or physical measure with no automated "
         r"evidence and no manual assessment\.$"
     ),
-    re.compile(r"^No findings for this measure; assumed compliant\.$"),
     # R1 evidence-based semantics: new evaluator defaults.
     re.compile(
         r"^Explicit scanner check covers all applicable requirements of this "
@@ -57,6 +55,57 @@ def _human_note(rationale: str) -> str:
     if not text or _is_auto_rationale(text):
         return ""
     return text
+
+
+#: Spanish descriptions of *what* each scanner rule kind inspects. Keys mirror
+#: the rule kinds of :data:`ens_audit.checks.mapping.MEASURE_MAP`; the renderers
+#: show these instead of the scanner-authored English ``checked`` text. Kept in
+#: sync with the mapping by ``tests/test_report_md_json.py``.
+KIND_LABELS_ES: dict[str, str] = {
+    "secret.hardcoded": "Credenciales y claves embebidas en el código fuente",
+    "crypto.weak_algorithm": (
+        "Uso de algoritmos criptográficos débiles o en desuso"
+    ),
+    "injection.sql": "Construcción segura de consultas SQL (inyección SQL)",
+    "injection.command": (
+        "Ejecución de código y comandos dinámicos (inyección de comandos)"
+    ),
+    "transport.tls_missing": "Cifrado del transporte mediante TLS",
+    "config.debug_enabled": "Modo de depuración en la configuración de producción",
+    "dependency.outdated": "Actualización y fijación de dependencias",
+    "logging.audit_disabled": "Registro de auditoría y trazabilidad de eventos",
+    "network.service_exposed": "Exposición de servicios de red",
+    "storage.unencrypted": "Cifrado de la información en reposo",
+    "backup.disabled": "Copias de seguridad y su retención",
+}
+
+#: Spanish labels for the machine-facing ``CheckEvidence.result`` values.
+RESULT_LABELS_ES: dict[str, str] = {"pass": "correcto"}
+
+
+def checked_label_es(item: Mapping[str, Any]) -> str:
+    """Return the Spanish description of what an evidence item checked.
+
+    A known scanner ``kind`` resolves to its :data:`KIND_LABELS_ES` label. An
+    item with an unknown/absent kind (e.g. hand-authored evidence built without a
+    rule kind) keeps its ``checked`` text verbatim, which is expected to be
+    authored in the report language already.
+    """
+    kind = str(item.get("kind") or "")
+    label = KIND_LABELS_ES.get(kind)
+    if label is not None:
+        return label
+    return str(item.get("checked") or "")
+
+
+def result_label_es(item: Mapping[str, Any]) -> str:
+    """Return the Spanish label of an evidence item's result value.
+
+    Unknown result values are shown verbatim (they are machine-facing codes
+    without a localized equivalent).
+    """
+    result = str(item.get("result") or "")
+    return RESULT_LABELS_ES.get(result, result)
 
 
 def _normalise_observed_at(value: object) -> str:
@@ -98,9 +147,14 @@ def positive_evidence_items(report: ComplianceReport) -> list[dict[str, Any]]:
     Positive evidence is the ``ScanReport.evidence`` (a list of
     :class:`~ens_audit.models.CheckEvidence`) carried into
     ``report.metadata["evidence"]``. Each item is returned with stable keys
-    (``scanner``, ``measure_codes``, ``checked``, ``scope``, ``result``,
-    ``observed_at`` as ``YYYY-MM-DD`` and ``covers_all``) so every renderer
-    presents the same data.
+    (``scanner``, ``measure_codes``, ``checked``, ``kind``, ``scope``,
+    ``result``, ``observed_at`` as ``YYYY-MM-DD`` and ``covers_all``) so every
+    renderer presents the same data.
+
+    ``checked`` stays the raw scanner-authored text and ``kind`` stays the raw
+    rule id: the machine-facing JSON document keeps both (a stable contract for
+    tooling). The Spanish human renderers do **not** print ``checked``; they
+    localize it through :func:`checked_label_es` using ``kind``.
     """
     raw = report.metadata.get("evidence")
     if raw is None:
@@ -121,6 +175,7 @@ def positive_evidence_items(report: ComplianceReport) -> list[dict[str, Any]]:
                     str(code) for code in (data.get("measure_codes") or [])
                 ],
                 "checked": str(data.get("checked") or ""),
+                "kind": (str(data["kind"]) if data.get("kind") else None),
                 "scope": str(data.get("scope") or ""),
                 "result": str(data.get("result") or ""),
                 "observed_at": _normalise_observed_at(data.get("observed_at")),
@@ -151,10 +206,14 @@ from .json import build_document, render_json, write_json
 from .markdown import render_markdown, write_markdown
 
 __all__ = [
+    "KIND_LABELS_ES",
+    "RESULT_LABELS_ES",
     "build_document",
+    "checked_label_es",
     "render_json",
     "render_markdown",
     "render_report",
+    "result_label_es",
     "write_json",
     "write_markdown",
 ]

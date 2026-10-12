@@ -84,6 +84,11 @@ class CheckEvidence(BaseModel):
     scanner: str
     measure_codes: list[str]
     checked: str
+    #: Rule kind that was evaluated (a key of
+    #: :data:`ens_audit.checks.mapping.MEASURE_MAP`). It lets the renderers show
+    #: a localized description instead of the scanner-authored English
+    #: ``checked`` text; ``None`` for hand-authored evidence without a rule kind.
+    kind: str | None = None
     scope: str
     result: str = "pass"
     observed_at: datetime = Field(default_factory=_utcnow)

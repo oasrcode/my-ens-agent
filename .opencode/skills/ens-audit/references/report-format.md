@@ -83,12 +83,12 @@ Generated in Spanish (the audit's working language); identifiers stay English.
 
 ## JSON structure
 
-Versioned document (`schema_version: "1.1"`), deterministic ordering (catalog
+Versioned document (`schema_version: "1.2"`), deterministic ordering (catalog
 order when a catalog is available):
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "generated_at": "<ISO-8601 UTC>",
   "category": "MEDIA",
   "summary": {
@@ -99,6 +99,7 @@ order when a catalog is available):
   "evidence": [
     {
       "scanner": "code.crypto",
+      "kind": "transport.tls_missing",
       "measure_codes": ["mp.com.2"],
       "checked": "TLS configuration of the web endpoints",
       "scope": "src/",

@@ -32,7 +32,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import ComplianceReport, Verdict
-from . import _human_note, positive_evidence_items, scanner_status_items
+from . import (
+    _human_note,
+    checked_label_es,
+    positive_evidence_items,
+    result_label_es,
+    scanner_status_items,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import used for typing only
     from ..catalog.models import Catalog, Medida
@@ -274,16 +280,29 @@ def _marco_title(marco: str) -> str:
     return _MARCO_TITLES.get(marco, marco)
 
 
+def _summary_ratio(report: ComplianceReport, key: str, derived: float) -> float:
+    """Return a percentage, preferring ``report.summary`` over metadata.
+
+    Mirrors :func:`ens_audit.report.markdown._ratio`: ``report.summary`` is the
+    authoritative source and the equivalent ``metadata`` key is only a fallback
+    for hand-built reports. The result is clamped to ``[0, 100]``.
+    """
+    value = getattr(report.summary, key, None)
+    if not isinstance(value, (int, float)):
+        value = (report.metadata or {}).get(key)
+    if not isinstance(value, (int, float)):
+        value = derived
+    return max(0.0, min(100.0, float(value)))
+
+
 def _compliance_pct(report: ComplianceReport) -> float:
     """Compliance percentage over applicable measures."""
-    value = report.metadata.get("compliance_pct")
-    if isinstance(value, (int, float)):
-        return max(0.0, min(100.0, float(value)))
     summary = report.summary
     applicable = summary.total - summary.no_aplica
-    if applicable <= 0:
-        return 0.0
-    return max(0.0, min(100.0, round(100 * summary.cumple / applicable, 2)))
+    derived = (
+        round(100 * summary.cumple / applicable, 2) if applicable > 0 else 0.0
+    )
+    return _summary_ratio(report, "compliance_pct", derived)
 
 
 def _coverage_pct(report: ComplianceReport) -> float:
@@ -293,19 +312,21 @@ def _coverage_pct(report: ComplianceReport) -> float:
     i.e. that are not ``no_evaluable``: ``(applicable - no_evaluable) /
     applicable``.
     """
-    value = report.metadata.get("coverage_pct")
-    if isinstance(value, (int, float)):
-        return max(0.0, min(100.0, float(value)))
     summary = report.summary
     applicable = summary.total - summary.no_aplica
-    if applicable <= 0:
-        return 0.0
     covered = applicable - summary.no_evaluable
-    return max(0.0, min(100.0, round(100 * covered / applicable, 2)))
+    derived = round(100 * covered / applicable, 2) if applicable > 0 else 0.0
+    return _summary_ratio(report, "coverage_pct", derived)
 
 
 def _applicable_count(report: ComplianceReport) -> int:
-    """Number of applicable measures (total minus not-applicable)."""
+    """Number of applicable measures (summary first, then metadata)."""
+    value = getattr(report.summary, "applicable", None)
+    if isinstance(value, (int, float)):
+        return int(value)
+    metadata_value = (report.metadata or {}).get("applicable")
+    if isinstance(metadata_value, (int, float)):
+        return int(metadata_value)
     return report.summary.total - report.summary.no_aplica
 
 
@@ -531,8 +552,8 @@ def _render_positive_evidence(report: ComplianceReport, language: str) -> str:
             rows.append(
                 "<tr>"
                 f'<td><code>{_esc(item["scanner"])}</code></td>'
-                f'<td class="ev-checked">{_esc(item["checked"])}</td>'
-                f'<td>{_esc(item["result"])}</td>'
+                f'<td class="ev-checked">{_esc(checked_label_es(item))}</td>'
+                f'<td>{_esc(result_label_es(item))}</td>'
                 f'<td>{_esc(item["scope"])}</td>'
                 f'<td class="ev-date">{_esc(item["observed_at"] or "—")}</td>'
                 "</tr>"

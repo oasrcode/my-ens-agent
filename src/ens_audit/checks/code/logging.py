@@ -25,7 +25,7 @@ from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
 from ..base import Scanner, ScannerResult, finalize_scan
-from ._common import file_line_finding, iter_source_files, read_text
+from ._common import file_line_finding, is_source_code, iter_source_files, read_text
 
 __all__ = ["LoggingScanner"]
 
@@ -75,23 +75,32 @@ class LoggingScanner(Scanner):
     def run(self, target: Path) -> ScannerResult:
         findings: list[Finding] = []
         examined = 0
+        source_examined = False
         has_logging_call = False
         for path in iter_source_files(target):
             text = read_text(path)
             if text is None:
                 continue
             examined += 1
-            if _LOGGING_CALL.search(text):
-                has_logging_call = True
+            # Only real source code can certify these measures: a manifest or a
+            # config file (``pyproject.toml``, ``*.yaml``, ...) is not source, so
+            # a clean pass over it says nothing about op.exp.8 / op.exp.10 /
+            # mp.si.2 (same class as the SAST manifest gap).
+            if is_source_code(path):
+                source_examined = True
+                if _LOGGING_CALL.search(text):
+                    has_logging_call = True
             findings.extend(self._scan_file(path, text))
         # ``secret.hardcoded`` here means "secret written to a log": without any
         # logging call to inspect, that check was never applied, so it must not
         # certify the secret measures. ``logging.audit_disabled`` (missing
         # logging in security modules, swallowed exceptions) is applied to
-        # every scanned source file.
-        evaluated = ["logging.audit_disabled"]
-        if has_logging_call:
-            evaluated.append("secret.hardcoded")
+        # every scanned source file. A manifest-only target certifies nothing.
+        evaluated: list[str] = []
+        if source_examined:
+            evaluated.append("logging.audit_disabled")
+            if has_logging_call:
+                evaluated.append("secret.hardcoded")
         return finalize_scan(
             self,
             target,

@@ -25,50 +25,22 @@ from ens_audit.checks.registry import register
 from ens_audit.models import Finding, Severity
 
 from ..base import Scanner, ScannerResult, finalize_scan
-from ._common import file_line_finding, iter_source_files, read_text
+
+# ``is_source_code`` / ``SOURCE_CODE_SUFFIXES`` live in ``_common`` with the rest
+# of the file-walking helpers; they are re-exported here for backward
+# compatibility with existing importers (e.g. ``checks/code/crypto.py``).
+from ._common import (
+    SOURCE_CODE_SUFFIXES,
+    file_line_finding,
+    is_source_code,
+    iter_source_files,
+    read_text,
+)
 
 __all__ = ["SOURCE_CODE_SUFFIXES", "SastScanner", "is_source_code"]
 
 _INJECTION_SQL = "injection.sql"
 _INJECTION_COMMAND = "injection.command"
-
-#: Suffixes that hold executable source code the risky-sink rules can assess.
-#: Deliberately narrower than ``_common.SOURCE_SUFFIXES``: manifests and
-#: configuration (``pyproject.toml``, ``package.json``, ``.env``, ``.yaml``, ...)
-#: are read for other checks but are not source code, so a clean pass over them
-#: says nothing about ``mp.sw.1``.
-SOURCE_CODE_SUFFIXES = frozenset(
-    {
-        ".py",
-        ".pyi",
-        ".js",
-        ".jsx",
-        ".mjs",
-        ".cjs",
-        ".ts",
-        ".tsx",
-        ".java",
-        ".kt",
-        ".go",
-        ".rb",
-        ".php",
-        ".cs",
-        ".c",
-        ".h",
-        ".cc",
-        ".cpp",
-        ".hpp",
-        ".sh",
-        ".bash",
-        ".ps1",
-        ".sql",
-    }
-)
-
-
-def is_source_code(path: Path) -> bool:
-    """Whether ``path`` is source code, as opposed to a manifest or config."""
-    return path.suffix.lower() in SOURCE_CODE_SUFFIXES
 
 # An SQL execution API call.
 _SQL_EXEC = re.compile(

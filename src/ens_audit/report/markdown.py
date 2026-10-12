@@ -14,7 +14,13 @@ from pathlib import Path
 
 from ..catalog.models import Catalog, Medida
 from ..models import ComplianceReport, Evidence, MeasureVerdict, Verdict
-from . import _human_note, positive_evidence_items, scanner_status_items
+from . import (
+    _human_note,
+    checked_label_es,
+    positive_evidence_items,
+    result_label_es,
+    scanner_status_items,
+)
 
 __all__ = ["render_markdown", "write_markdown"]
 
@@ -30,17 +36,15 @@ _VERDICT_LABELS: dict[str, str] = {
 #: Verdicts rendered as non-conformities (major: no cumple; minor: parcial).
 _NON_CONFORMITY_VERDICTS = (Verdict.NO_CUMPLE, Verdict.PARCIAL)
 
+#: Language used when the requested one is unknown. Only Spanish is authored.
+_DEFAULT_LANGUAGE = "es"
+
 #: Human-readable labels for the scanner execution statuses.
 _STATUS_LABELS: dict[str, dict[str, str]] = {
     "es": {
         "completed": "Completado",
         "failed": "Fallido",
         "skipped": "Omitido",
-    },
-    "en": {
-        "completed": "Completed",
-        "failed": "Failed",
-        "skipped": "Skipped",
     },
 }
 
@@ -92,73 +96,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "no_evidence": "Sin evidencia registrada.",
         "none": "Ninguna.",
     },
-    "en": {
-        "title": "ENS compliance report",
-        "metadata": "Metadata",
-        "system": "System",
-        "category": "Category",
-        "date": "Date",
-        "norm": "Standard",
-        "catalog_version": "Catalog version",
-        "not_specified": "Not specified",
-        "exec_summary": "Executive summary",
-        "verdict": "Verdict",
-        "measure_count": "Measures",
-        "pct_of_total": "% of total",
-        "compliance_pct": "Compliance percentage",
-        "scope": "Scope and methodology",
-        "categorisation": "Categorisation",
-        "compliance_label": "Compliance",
-        "coverage_label": "Evaluation coverage",
-        "applicable": "applicable measures",
-        "positive_evidence": "Positive evidence",
-        "positive_evidence_lead": (
-            "Scanner checks with a favourable result: what was checked, its "
-            "scope and date."
-        ),
-        "no_positive_evidence": "No positive evidence recorded.",
-        "scanner_status": "Scanner status",
-        "scanner_status_lead": "Outcome of each scanner run.",
-        "no_scanner_status": "No scanner execution data.",
-        "scanner": "Scanner",
-        "status": "Status",
-        "checked": "Checked",
-        "result": "Result",
-        "evidence_scope": "Scope",
-        "observed_at": "Date",
-        "failed_scanners": "Failed scanners",
-        "failed_scanners_note": "Their measures remain not evaluable.",
-        "measures_table": "Full measure table",
-        "code": "Code",
-        "measure": "Measure",
-        "marco_family": "Framework / Family",
-        "non_conformities": "Non-conformities",
-        "recommendations": "Recommendations",
-        "rationale": "Rationale",
-        "evidence": "Evidence",
-        "no_evidence": "No evidence recorded.",
-        "none": "None.",
-    },
-}
-
-_VERDICT_LABELS_EN: dict[str, str] = {
-    Verdict.CUMPLE.value: "Compliant",
-    Verdict.NO_CUMPLE.value: "Non-compliant",
-    Verdict.PARCIAL.value: "Partial",
-    Verdict.NO_APLICA.value: "Not applicable",
-    Verdict.NO_EVALUABLE.value: "Not evaluable",
 }
 
 
 def _strings(language: str) -> dict[str, str]:
     """Return the string table for ``language``, falling back to Spanish."""
-    return _STRINGS.get(language, _STRINGS["es"])
+    return _STRINGS.get(language) or _STRINGS[_DEFAULT_LANGUAGE]
 
 
-def _verdict_label(verdict: Verdict, language: str) -> str:
-    """Return the human-readable label of a verdict."""
-    labels = _VERDICT_LABELS_EN if language == "en" else _VERDICT_LABELS
-    return labels.get(verdict.value, verdict.value)
+def _verdict_label(verdict: Verdict) -> str:
+    """Return the human-readable (Spanish) label of a verdict."""
+    return _VERDICT_LABELS.get(verdict.value, verdict.value)
 
 
 def _cell(text: object) -> str:
@@ -171,19 +119,21 @@ def _ratio(report: ComplianceReport, key: str, fallback: float) -> float:
 
     ``report.summary`` is the authoritative source for the aggregate ratios;
     the equivalent ``metadata`` key is only consulted when the summary does not
-    carry a numeric value. ``fallback`` is the last resort.
+    carry a numeric value. ``fallback`` is the last resort. The result is
+    clamped to ``[0, 100]``, mirroring
+    :func:`ens_audit.report.html._summary_ratio`.
     """
     value = getattr(report.summary, key, None)
     if not isinstance(value, (int, float)):
         value = (report.metadata or {}).get(key)
-    if isinstance(value, (int, float)):
-        return float(value)
-    return float(fallback)
+    if not isinstance(value, (int, float)):
+        value = fallback
+    return max(0.0, min(100.0, float(value)))
 
 
-def _status_label(status: str, language: str) -> str:
-    """Return the human-readable label of a scanner execution status."""
-    labels = _STATUS_LABELS.get(language, _STATUS_LABELS["es"])
+def _status_label(status: str) -> str:
+    """Return the human-readable (Spanish) label of a scanner status."""
+    labels = _STATUS_LABELS[_DEFAULT_LANGUAGE]
     return labels.get(status, status)
 
 
@@ -230,9 +180,7 @@ def _render_metadata(report: ComplianceReport, t: dict[str, str]) -> list[str]:
     return lines
 
 
-def _render_summary(
-    report: ComplianceReport, t: dict[str, str], language: str
-) -> list[str]:
+def _render_summary(report: ComplianceReport, t: dict[str, str]) -> list[str]:
     """Render the executive summary: the five counts and both ratios."""
     summary = report.summary
     total = summary.total or 1
@@ -269,7 +217,7 @@ def _render_summary(
     for verdict, count in rows:
         pct = round(100 * count / total, 2)
         lines.append(
-            f"| {_verdict_label(verdict, language)} | {count} | {pct} % |"
+            f"| {_verdict_label(verdict)} | {count} | {pct} % |"
         )
     lines.append("")
     return lines
@@ -293,8 +241,8 @@ def _render_positive_evidence(
     ]
     for item in items:
         lines.append(
-            f"| `{_cell(item['scanner'])}` | {_cell(item['checked'])} | "
-            f"{_cell(item['result'])} | {_cell(item['scope'])} | "
+            f"| `{_cell(item['scanner'])}` | {_cell(checked_label_es(item))} | "
+            f"{_cell(result_label_es(item))} | {_cell(item['scope'])} | "
             f"{_cell(item['observed_at'] or '—')} |"
         )
     lines.append("")
@@ -302,7 +250,7 @@ def _render_positive_evidence(
 
 
 def _render_scanner_status(
-    report: ComplianceReport, t: dict[str, str], language: str
+    report: ComplianceReport, t: dict[str, str]
 ) -> list[str]:
     """Render each scanner's execution status, surfacing failures explicitly."""
     statuses = scanner_status_items(report)
@@ -314,7 +262,7 @@ def _render_scanner_status(
     for scanner in sorted(statuses):
         lines.append(
             f"| `{_cell(scanner)}` | "
-            f"{_cell(_status_label(statuses[scanner], language))} |"
+            f"{_cell(_status_label(statuses[scanner]))} |"
         )
     lines.append("")
     failed = sorted(s for s, status in statuses.items() if status == "failed")
@@ -356,7 +304,7 @@ def _render_scope(
         "",
         f"- Escáneres ejecutados: {scanner_list}.",
         f"- Hallazgos registrados: {metadata.get('finding_count', 0)}.",
-        f"- Medidas aplicables: {metadata.get('applicable', 0)}.",
+        f"- Medidas aplicables: {report.summary.applicable}.",
         "",
     ]
     return lines
@@ -383,7 +331,6 @@ def _render_measures_table(
     report: ComplianceReport,
     catalog: Catalog | None,
     t: dict[str, str],
-    language: str,
 ) -> list[str]:
     """Render the full table of measures (one row per catalog measure)."""
     lines = [
@@ -406,14 +353,14 @@ def _render_measures_table(
         lines.append(
             f"| `{_cell(verdict.measure_code)}` | {_cell(name)} | "
             f"{_cell(marco_family)} | "
-            f"{_verdict_label(verdict.verdict, language)} |"
+            f"{_verdict_label(verdict.verdict)} |"
         )
     lines.append("")
     return lines
 
 
 def _render_non_conformities(
-    report: ComplianceReport, catalog: Catalog | None, t: dict[str, str], language: str
+    report: ComplianceReport, catalog: Catalog | None, t: dict[str, str]
 ) -> list[str]:
     """Render the non-conformities section with evidence and rationale."""
     lines = [f"## {t['non_conformities']}", ""]
@@ -428,7 +375,7 @@ def _render_non_conformities(
     for verdict in findings:
         medida = _measure_of(catalog, verdict.measure_code)
         name = f" — {medida.name}" if medida is not None else ""
-        label = _verdict_label(verdict.verdict, language)
+        label = _verdict_label(verdict.verdict)
         lines.append(f"### `{verdict.measure_code}`{name} ({label})")
         lines.append("")
         rationale = _human_note(verdict.rationale) or t["none"]
@@ -495,7 +442,8 @@ def render_markdown(
     :param report: the consolidated compliance report.
     :param catalog: optional catalog used to enrich each measure with its name
         and family; when omitted, measures are shown by code only.
-    :param language: report language; ``"es"`` (default) or ``"en"``.
+    :param language: report language; only ``"es"`` is authored and any other
+        value falls back to Spanish.
     :returns: the complete Markdown document as a string.
     """
     t = _strings(language)
@@ -506,13 +454,13 @@ def render_markdown(
         "",
     ]
     lines += _render_metadata(report, t)
-    lines += _render_summary(report, t, language)
+    lines += _render_summary(report, t)
     lines += _render_scope(report, t, catalog)
     lines += _render_categorisation(report, t)
     lines += _render_positive_evidence(report, t)
-    lines += _render_scanner_status(report, t, language)
-    lines += _render_measures_table(report, catalog, t, language)
-    lines += _render_non_conformities(report, catalog, t, language)
+    lines += _render_scanner_status(report, t)
+    lines += _render_measures_table(report, catalog, t)
+    lines += _render_non_conformities(report, catalog, t)
     lines += _render_recommendations(report, catalog, t)
     return "\n".join(lines).rstrip() + "\n"
 
@@ -525,6 +473,7 @@ def write_markdown(
 ) -> Path:
     """Render ``report`` as Markdown and write it to ``path``.
 
+    :param language: report language; see :func:`render_markdown`.
     :returns: the :class:`pathlib.Path` written to.
     """
     destination = Path(path)

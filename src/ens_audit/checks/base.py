@@ -143,6 +143,7 @@ def build_evidence(
                 scanner=scanner.id,
                 measure_codes=sorted(covered),
                 checked=description,
+                kind=kind,
                 scope=scope,
             )
         )
